@@ -168,6 +168,22 @@ namespace detail{
             heapInfos.size = size;
         }
 
+        /** free all allocated memory
+         *
+         * after calling this method the pool is in an invalid state
+         * because `heapInfos.p == NULL`
+         */
+        MAMC_HOST
+        void
+        finalizeHeap( )
+        {
+            CreationPolicy::finalizeHeap( allocatorHandle.devAllocator, heapInfos.p );
+            cudaFree( allocatorHandle.devAllocator );
+            ReservePoolPolicy::resetMemPool( heapInfos.p );
+            heapInfos.size = 0;
+            heapInfos.p = NULL;
+        }
+
     public:
 
 
@@ -192,16 +208,6 @@ namespace detail{
         {
             finalizeHeap( );
             alloc( size );
-        }
-
-        MAMC_HOST
-        void
-        finalizeHeap( )
-        {
-            CreationPolicy::finalizeHeap( allocatorHandle.devAllocator, heapInfos.p );
-            cudaFree( allocatorHandle.devAllocator );
-            ReservePoolPolicy::resetMemPool( heapInfos.p );
-            heapInfos.size = 0;
         }
 
         MAMC_HOST
