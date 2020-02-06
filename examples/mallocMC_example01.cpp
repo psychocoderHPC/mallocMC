@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /*
   mallocMC: Memory Allocator for Many Core Architectures.
   https://www.hzdr.de/crp
@@ -31,27 +32,25 @@
 #include <vector>
 #include <numeric>
 
-#include <cuda.h>
-#include "mallocMC_example01_config.cu"
+#include <hip/hip_runtime.h>
+#include "mallocMC_example01_config.cpp"
 
 void run();
 
 int main()
 {
-  int computeCapabilityMajor = 0;
-  cudaDeviceGetAttribute(&computeCapabilityMajor, cudaDevAttrComputeCapabilityMajor, 0);
-  int computeCapabilityMinor = 0;
-  cudaDeviceGetAttribute(&computeCapabilityMinor, cudaDevAttrComputeCapabilityMinor, 0);
+  hipDeviceProp_t deviceProp;
+  hipGetDeviceProperties(&deviceProp, 0);
 
-  if( computeCapabilityMajor < 2 ) {
+  if( deviceProp.major < 2 ) {
     std::cerr << "Error: Compute Capability >= 2.0 required. (is ";
-    std::cerr << computeCapabilityMajor << "."<< computeCapabilityMinor << ")" << std::endl;
+    std::cerr << deviceProp.major << "."<< deviceProp.minor << ")" << std::endl;
     return 1;
   }
 
-  cudaSetDevice(0);
+  hipSetDevice(0);
   run();
-  cudaDeviceReset();
+  hipDeviceReset();
 
   return 0;
 }
@@ -125,22 +124,22 @@ void run()
 
   // device-side pointers
   int*  d;
-  cudaMalloc((void**) &d, sizeof(int)*block*grid);
+  hipMalloc((void**) &d, sizeof(int)*block*grid);
 
   // host-side pointers
   std::vector<int> array_sums(block*grid,0);
 
   // create arrays of arrays on the device
-  createArrayPointers<<<1,1>>>(grid,block, mMC );
+  hipLaunchKernelGGL(createArrayPointers, dim3(1), dim3(1), 0, 0, grid,block, mMC );
 
   // fill 2 of them all with ascending values
-  fillArrays<<<grid,block>>>(length, d, mMC );
+  hipLaunchKernelGGL(fillArrays, dim3(grid), dim3(block), 0, 0, length, d, mMC );
 
   // add the 2 arrays (vector addition within each thread)
   // and do a thread-wise reduce to d
-  addArrays<<<grid,block>>>(length, d);
+  hipLaunchKernelGGL(addArrays, dim3(grid), dim3(block), 0, 0, length, d);
 
-  cudaMemcpy(&array_sums[0],d,sizeof(int)*block*grid,cudaMemcpyDeviceToHost);
+  hipMemcpy(&array_sums[0],d,sizeof(int)*block*grid,hipMemcpyDeviceToHost);
 
   mMC.getAvailableSlots(1024U*1024U); //get available megabyte-sized slots
 
@@ -151,8 +150,8 @@ void run()
   int gaussian = n*(n-1);
   std::cout << "The gaussian sum as comparison: " << gaussian << std::endl;
 
-  freeArrays<<<grid,block>>>( mMC );
-  freeArrayPointers<<<1,1>>>( mMC );
-  cudaFree(d);
+  hipLaunchKernelGGL(freeArrays, dim3(grid), dim3(block), 0, 0,  mMC );
+  hipLaunchKernelGGL(freeArrayPointers, dim3(1), dim3(1), 0, 0,  mMC );
+  hipFree(d);
 
 }
