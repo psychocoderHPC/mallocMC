@@ -183,12 +183,19 @@ namespace detail{
             heapInfos.p = NULL;
         }
 
-        /* forbid to copy the allocator */
-        MAMC_HOST
-        Allocator( const Allocator& );
-
     public:
 
+        Allocator( Allocator&& ) = default;
+
+#ifdef __HCC__
+        /* workaround: hipLaunchKernelGGL is creating a copy of all parameters
+         * therefore we need to allow that the allocator can be copied
+         * but must disable the free in the destructor
+         */
+        Allocator( const Allocator& ) = default;
+#else
+        Allocator( const Allocator& ) = delete;
+#endif
 
         MAMC_HOST
         Allocator(
@@ -202,7 +209,9 @@ namespace detail{
         MAMC_HOST
         ~Allocator( )
         {
+#if !defined(__HCC__)
             free( );
+#endif
         }
 
         /** destroy current heap data and resize the heap

@@ -116,7 +116,7 @@ namespace mallocMC
   typedef mallocMC::__PointerEquivalent<sizeof(char*)>::type PointerEquivalent;
 
 // https://github.com/ROCm-Developer-Tools/HIP/blob/master/include/hip/hcc_detail/device_functions.h
-#ifdef __HIP__
+#if defined(__HIP__) || defined(__HCC__)
   MAMC_ACCELERATOR inline boost::uint32_t laneid()
   {
     return __lane_id();
@@ -137,7 +137,7 @@ namespace mallocMC
    *
    * @return current index of the warp
    */
-#ifdef __HIP__
+#if defined(__HIP__)
   // get wave id https://github.com/ROCm-Developer-Tools/HIP/blob/f72a669487dd352e45321c4b3038f8fe2365c236/include/hip/hcc_detail/device_functions.h#L974-L1024
   __device__
   inline
@@ -150,6 +150,12 @@ namespace mallocMC
   {
       return wave_id();
   }
+#elif defined(__HCC__)
+  MAMC_ACCELERATOR inline boost::uint32_t warpid()
+  {
+      // workaround because wave_id is not available for HCC
+      return clock()%8;
+  }
 #else
   MAMC_ACCELERATOR inline boost::uint32_t warpid()
   {
@@ -159,10 +165,16 @@ namespace mallocMC
   }
 #endif
 
-#ifdef __HIP__
+#if defined(__HIP__)
   MAMC_ACCELERATOR inline boost::uint32_t smid()
   {
     return __smid();
+  }
+#elif defined(__HCC__)
+  MAMC_ACCELERATOR inline boost::uint32_t smid()
+  {
+    // workaround because __smid is not available for HCC
+    return clock()%8;
   }
 #else
   MAMC_ACCELERATOR inline boost::uint32_t smid()
@@ -173,7 +185,7 @@ namespace mallocMC
   }
 #endif
 
-#ifdef __HIP__
+#if defined(__HIP__) || defined(__HCC__)
   MAMC_ACCELERATOR inline boost::uint64_t lanemask_lt()
   {
       return __lanemask_lt();
