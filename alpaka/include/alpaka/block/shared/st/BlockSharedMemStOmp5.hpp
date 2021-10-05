@@ -15,8 +15,8 @@
 #        error If ALPAKA_ACC_ANY_BT_OMP5_ENABLED is set, the compiler has to support OpenMP 4.0 or higher!
 #    endif
 
-#    include <alpaka/block/shared/st/BlockSharedMemStMember.hpp>
 #    include <alpaka/block/shared/st/Traits.hpp>
+#    include <alpaka/block/shared/st/detail/BlockSharedMemStMemberImpl.hpp>
 
 #    include <omp.h>
 
@@ -44,10 +44,21 @@ namespace alpaka
             //-----------------------------------------------------------------------------
             static auto declareVar(BlockSharedMemStOmp5 const& smem) -> T&
             {
+                auto* data = blockSharedMemSt.template getVar<T>(TuniqueId);
+
+                if(!data)
+                {
 #    pragma omp barrier
-                smem.alloc<T>();
+#    pragma onmp single
+                    {
+                        blockSharedMemSt.template alloc<T>(TuniqueId);
+                    }
 #    pragma omp barrier
-                return smem.getLatestVar<T>();
+                    // lookup for the data chunk allocated by the master thread
+                    data = blockSharedMemSt.template getVar<T>(TuniqueId);
+                }
+                ALPAKA_ASSERT(data != nullptr);
+                return std::ref(*data);
             }
         };
         //#############################################################################
@@ -57,7 +68,6 @@ namespace alpaka
             //-----------------------------------------------------------------------------
             static auto freeVars(BlockSharedMemStOmp5 const& mem) -> void
             {
-                mem.free();
             }
         };
     } // namespace traits

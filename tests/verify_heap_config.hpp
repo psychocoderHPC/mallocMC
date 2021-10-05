@@ -73,7 +73,7 @@ struct AlignmentConfig
 using ScatterAllocator = mallocMC::Allocator<
     Acc,
     mallocMC::CreationPolicies::Scatter<ScatterConfig, ScatterHashParams>,
-    mallocMC::DistributionPolicies::Noop,
+    mallocMC::DistributionPolicies::XMallocSIMD<DistributionConfig>,
     mallocMC::OOMPolicies::ReturnNull,
     mallocMC::ReservePoolPolicies::AlpakaBuf<Acc>,
     mallocMC::AlignmentPolicies::Shrink<AlignmentConfig>>;
