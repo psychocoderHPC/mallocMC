@@ -100,7 +100,8 @@ namespace mallocMC
             struct SetHeapKernel
             {
                 template<typename TAcc, typename T_DeviceAllocator>
-                ALPAKA_FN_ACC auto operator()(TAcc const&, T_DeviceAllocator* devAllocator, Gallatin* heapPtr) const -> void
+                ALPAKA_FN_ACC auto operator()(TAcc const&, T_DeviceAllocator* devAllocator, Gallatin* heapPtr) const
+                    -> void
                 {
                     devAllocator->heap = heapPtr;
                 }

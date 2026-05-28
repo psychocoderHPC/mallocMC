@@ -97,7 +97,8 @@ auto runExample(auto const& deviceSpec, TExecutor exec) -> int
     auto workDiv = makeWorkDiv<TExecutor>(devAcc, 32U);
     auto kernel = [] ALPAKA_FN_ACC(auto const& acc, auto allocHandle, auto out)
     {
-        auto id = static_cast<std::uint32_t>(acc.getIdxWithin(alpaka::onAcc::origin::grid, alpaka::onAcc::unit::threads)[0]);
+        auto id = static_cast<std::uint32_t>(
+            acc.getIdxWithin(alpaka::onAcc::origin::grid, alpaka::onAcc::unit::threads)[0]);
         auto ptr = static_cast<int*>(allocHandle.malloc(acc, sizeof(int)));
         out[id] = (ptr != nullptr) ? static_cast<int>(id) : -1;
         if(ptr != nullptr)
@@ -133,9 +134,10 @@ auto main() -> int
             if(result != EXIT_SUCCESS)
                 return;
 
-            result = runExample<Executor, FlatterScatter<FlatterScatterHeapConfig>, mallocMC::ReservePoolPolicies::AlpakaBuf>(
-                deviceSpec,
-                exec);
+            result = runExample<
+                Executor,
+                FlatterScatter<FlatterScatterHeapConfig>,
+                mallocMC::ReservePoolPolicies::AlpakaBuf>(deviceSpec, exec);
             if(result != EXIT_SUCCESS)
                 return;
             result = runExample<Executor, Scatter<FlatterScatterHeapConfig>, mallocMC::ReservePoolPolicies::AlpakaBuf>(

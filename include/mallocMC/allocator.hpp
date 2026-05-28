@@ -142,12 +142,7 @@ namespace mallocMC
             auto buffer = alpaka::onHost::alloc<DevAllocator>(dev, std::size_t{1u});
             devAllocatorBuffer = alpaka::onHost::data(buffer);
             devAllocatorStorage.emplace<decltype(buffer)>(std::move(buffer));
-            CreationPolicy::template initHeap<Executor>(
-                dev,
-                queue,
-                devAllocatorBuffer,
-                pool,
-                size);
+            CreationPolicy::template initHeap<Executor>(dev, queue, devAllocatorBuffer, pool, size);
 
             heapInfos.p = pool;
             heapInfos.size = size;

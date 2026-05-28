@@ -83,8 +83,9 @@ namespace mallocMC::CreationPolicies::FlatterScatterAlloc
         {
             auto const threadsInGrid = acc.getExtentsOf(alpaka::onAcc::origin::grid, alpaka::onAcc::unit::threads);
             auto const numThreads = threadsInGrid.product();
-            auto const idx = static_cast<uint32_t>(
-                alpaka::linearize(threadsInGrid, acc.getIdxWithin(alpaka::onAcc::origin::grid, alpaka::onAcc::unit::threads)));
+            auto const idx = static_cast<uint32_t>(alpaka::linearize(
+                threadsInGrid,
+                acc.getIdxWithin(alpaka::onAcc::origin::grid, alpaka::onAcc::unit::threads)));
             auto* accessBlocks = static_cast<MyAccessBlock*>(accessBlocksPointer);
 
             for(uint32_t i = idx; i < numBlocks(heapSize) * MyAccessBlock::numPages(); i += numThreads)
@@ -389,8 +390,11 @@ namespace mallocMC::CreationPolicies
         struct GetAvailableSlotsKernel
         {
             template<typename TAcc, typename T_DeviceAllocator>
-            ALPAKA_FN_ACC auto operator()(TAcc const& acc, T_DeviceAllocator* heapPtr, uint32_t numBytes, size_t* slots)
-                const -> void
+            ALPAKA_FN_ACC auto operator()(
+                TAcc const& acc,
+                T_DeviceAllocator* heapPtr,
+                uint32_t numBytes,
+                size_t* slots) const -> void
             {
                 *slots = heapPtr->getAvailableSlotsDeviceFunction(acc, numBytes);
             }

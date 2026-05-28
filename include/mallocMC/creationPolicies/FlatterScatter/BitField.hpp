@@ -318,7 +318,8 @@ namespace mallocMC::CreationPolicies::FlatterScatterAlloc
 
                 // In case of no free bit found, this will return -1. Storing it in a uint32_t will underflow and
                 // result in 0xffffffff but that's okay because it also ends the loop as intended.
-                using IntrinsicType = std::conditional_t<(sizeof(BitMaskStorageType<MyBitMaskSize>) <= 4u), std::uint32_t, std::uint64_t>;
+                using IntrinsicType = std::
+                    conditional_t<(sizeof(BitMaskStorageType<MyBitMaskSize>) <= 4u), std::uint32_t, std::uint64_t>;
                 i = alpaka::ffs(static_cast<std::make_signed_t<IntrinsicType>>(~oldMask)) - 1;
             }
 

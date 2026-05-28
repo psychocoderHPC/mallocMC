@@ -55,8 +55,8 @@
 
 using mallocMC::span;
 using Idx = std::uint32_t;
-using EnabledBackends
-    = std::decay_t<decltype(alpaka::onHost::allBackends(alpaka::onHost::enabledDeviceSpecs, alpaka::exec::enabledExecutors))>;
+using EnabledBackends = std::decay_t<
+    decltype(alpaka::onHost::allBackends(alpaka::onHost::enabledDeviceSpecs, alpaka::exec::enabledExecutors))>;
 
 
 constexpr uint32_t pageSize = 1024;
@@ -245,7 +245,9 @@ auto setup(auto const& cfg)
 template<typename TAcc>
 auto createWorkDiv(auto const& devAcc, auto const numElements, auto... /*args*/)
 {
-    auto threads = std::max<Idx>(1u, std::min<Idx>(static_cast<Idx>(numElements), devAcc.getDeviceProperties().maxThreadsPerBlock));
+    auto threads = std::max<Idx>(
+        1u,
+        std::min<Idx>(static_cast<Idx>(numElements), devAcc.getDeviceProperties().maxThreadsPerBlock));
     auto blocks = std::max<Idx>(1u, static_cast<Idx>((numElements + threads - 1u) / threads));
     if constexpr(
         std::is_same_v<TAcc, alpaka::exec::CpuSerial>
@@ -689,11 +691,7 @@ TEMPLATE_LIST_TEST_CASE("Threaded Scatter", "", EnabledBackends)
         auto const beforeDestroy1
             = getAvailableSlots<Acc>(accessBlock, queue, devHost, devAcc, chunkSizes.m_onHost[1]);
 
-        queue.enqueue(
-            workDiv,
-            Destroy{},
-            accessBlock,
-            span<void*>(alpaka::onHost::data(pointers.m_onDevice), 2U));
+        queue.enqueue(workDiv, Destroy{}, accessBlock, span<void*>(alpaka::onHost::data(pointers.m_onDevice), 2U));
         alpaka::onHost::wait(queue);
 
         auto const afterDestroy0 = getAvailableSlots<Acc>(accessBlock, queue, devHost, devAcc, chunkSizes.m_onHost[0]);
@@ -717,11 +715,7 @@ TEMPLATE_LIST_TEST_CASE("Threaded Scatter", "", EnabledBackends)
 
         auto const beforeDestroy = getAvailableSlots<Acc>(accessBlock, queue, devHost, devAcc, chunkSizes.m_onHost[0]);
 
-        queue.enqueue(
-            workDiv,
-            Destroy{},
-            accessBlock,
-            span<void*>(alpaka::onHost::data(pointers.m_onDevice), 2U));
+        queue.enqueue(workDiv, Destroy{}, accessBlock, span<void*>(alpaka::onHost::data(pointers.m_onDevice), 2U));
         alpaka::onHost::wait(queue);
 
         auto const afterDestroy = getAvailableSlots<Acc>(accessBlock, queue, devHost, devAcc, chunkSizes.m_onHost[0]);

@@ -122,7 +122,6 @@ namespace mallocMC
 #endif
     }
 
-
     /** the maximal number threads per block, valid for sm_2.X - sm_7.5
      *
      * https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#compute-capabilities

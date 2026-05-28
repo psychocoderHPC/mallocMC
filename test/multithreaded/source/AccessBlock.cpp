@@ -25,6 +25,7 @@
 */
 
 #include "mallocMC/creationPolicies/FlatterScatter/AccessBlock.hpp"
+
 #include "mallocMC/mallocMC_utils.hpp"
 #include "mallocMC/span.hpp"
 #include "mocks.hpp"
@@ -50,8 +51,8 @@ using mallocMC::CreationPolicies::FlatterScatterAlloc::AccessBlock;
 using mallocMC::span;
 
 using Idx = std::uint32_t;
-using EnabledBackends
-    = std::decay_t<decltype(alpaka::onHost::allBackends(alpaka::onHost::enabledDeviceSpecs, alpaka::exec::enabledExecutors))>;
+using EnabledBackends = std::decay_t<
+    decltype(alpaka::onHost::allBackends(alpaka::onHost::enabledDeviceSpecs, alpaka::exec::enabledExecutors))>;
 
 
 constexpr uint32_t pageSize = 1024;
@@ -244,7 +245,9 @@ auto setup(auto const& cfg)
 template<typename TAcc>
 auto createWorkDiv(auto const& devAcc, auto const numElements, auto... /*args*/)
 {
-    auto threads = std::max<Idx>(1u, std::min<Idx>(static_cast<Idx>(numElements), devAcc.getDeviceProperties().maxThreadsPerBlock));
+    auto threads = std::max<Idx>(
+        1u,
+        std::min<Idx>(static_cast<Idx>(numElements), devAcc.getDeviceProperties().maxThreadsPerBlock));
     auto blocks = std::max<Idx>(1u, static_cast<Idx>((numElements + threads - 1u) / threads));
     if constexpr(
         std::is_same_v<TAcc, alpaka::exec::CpuSerial>

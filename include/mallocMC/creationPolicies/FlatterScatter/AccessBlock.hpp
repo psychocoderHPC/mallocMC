@@ -456,7 +456,8 @@ namespace mallocMC::CreationPolicies::FlatterScatterAlloc
             uint32_t oldFilling = 0U;
             for(index = 0U; index < numPagesNeeded; ++index)
             {
-                oldFilling = alpaka::onAcc::atomicCas(acc, &pageTable.fillingLevels[firstIndex + index], 0U, +pageSize);
+                oldFilling
+                    = alpaka::onAcc::atomicCas(acc, &pageTable.fillingLevels[firstIndex + index], 0U, +pageSize);
                 if(oldFilling != 0U)
                 {
                     break;
@@ -802,7 +803,10 @@ namespace mallocMC::CreationPolicies::FlatterScatterAlloc
                             // filling level is always considered first, so no other thread can have passed that
                             // barrier to reset it.
                             MyPageInterpretation{pages[pageIndex], chunkSize}.cleanupUnused();
-                            alpaka::onAcc::memFence(acc, alpaka::onAcc::scope::Device{}, alpaka::onAcc::order::seq_cst);
+                            alpaka::onAcc::memFence(
+                                acc,
+                                alpaka::onAcc::scope::Device{},
+                                alpaka::onAcc::order::seq_cst);
                         }
 
                         // At this point, there might already be another thread (with another chunkSize) on this page
