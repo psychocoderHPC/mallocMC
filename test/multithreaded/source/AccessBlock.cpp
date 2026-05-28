@@ -248,8 +248,21 @@ auto setup()
 template<typename TAcc>
 auto createWorkDiv(auto const& devAcc, auto const numElements, auto... /*args*/)
 {
-    auto const threads = std::max<Idx>(1u, std::min<Idx>(static_cast<Idx>(numElements), devAcc.getDeviceProperties().maxThreadsPerBlock));
-    auto const blocks = std::max<Idx>(1u, static_cast<Idx>((numElements + threads - 1u) / threads));
+    auto threads = std::max<Idx>(1u, std::min<Idx>(static_cast<Idx>(numElements), devAcc.getDeviceProperties().maxThreadsPerBlock));
+    auto blocks = std::max<Idx>(1u, static_cast<Idx>((numElements + threads - 1u) / threads));
+    if constexpr(
+        std::is_same_v<TAcc, alpaka::exec::CpuSerial>
+#ifndef ALPAKA_DISABLE_EXEC_CpuOmpBlocks
+        || std::is_same_v<TAcc, alpaka::exec::CpuOmpBlocks>
+#endif
+#ifndef ALPAKA_DISABLE_EXEC_CpuTbbBlocks
+        || std::is_same_v<TAcc, alpaka::exec::CpuTbbBlocks>
+#endif
+    )
+    {
+        blocks *= threads;
+        threads = 1u;
+    }
     return alpaka::onHost::ThreadSpec{alpaka::Vec{blocks}, alpaka::Vec{threads}, TAcc{}};
 }
 

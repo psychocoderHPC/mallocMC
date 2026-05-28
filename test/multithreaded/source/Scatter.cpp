@@ -239,8 +239,21 @@ auto setup()
 template<typename TAcc>
 auto createWorkDiv(auto const& devAcc, auto const numElements, auto... /*args*/)
 {
-    auto const threads = std::max<Idx>(1u, std::min<Idx>(static_cast<Idx>(numElements), devAcc.getDeviceProperties().maxThreadsPerBlock));
-    auto const blocks = std::max<Idx>(1u, static_cast<Idx>((numElements + threads - 1u) / threads));
+    auto threads = std::max<Idx>(1u, std::min<Idx>(static_cast<Idx>(numElements), devAcc.getDeviceProperties().maxThreadsPerBlock));
+    auto blocks = std::max<Idx>(1u, static_cast<Idx>((numElements + threads - 1u) / threads));
+    if constexpr(
+        std::is_same_v<TAcc, alpaka::exec::CpuSerial>
+#ifndef ALPAKA_DISABLE_EXEC_CpuOmpBlocks
+        || std::is_same_v<TAcc, alpaka::exec::CpuOmpBlocks>
+#endif
+#ifndef ALPAKA_DISABLE_EXEC_CpuTbbBlocks
+        || std::is_same_v<TAcc, alpaka::exec::CpuTbbBlocks>
+#endif
+    )
+    {
+        blocks *= threads;
+        threads = 1u;
+    }
     return alpaka::onHost::ThreadSpec{alpaka::Vec{blocks}, alpaka::Vec{threads}, TAcc{}};
 }
 
@@ -248,8 +261,7 @@ template<typename TAcc>
 auto fillWith(auto& queue, auto* accessBlock, auto const& chunkSize, auto& pointers)
 {
     auto const workDivSingleThread = alpaka::onHost::ThreadSpec{alpaka::Vec{Idx{1}}, alpaka::Vec{Idx{1}}, TAcc{}};
-    alpaka::exec<TAcc>(
-        queue,
+    queue.enqueue(
         workDivSingleThread,
         FillWith{},
         accessBlock,
@@ -270,8 +282,7 @@ auto fillAllButOne(auto& queue, auto* accessBlock, auto const& chunkSize, auto& 
     // Destroy exactly one pointer (i.e. the first). This is non-destructive on the actual values in
     // devPointers, so we don't need to wait for the copy before to finish.
     auto const workDivSingleThread = alpaka::onHost::ThreadSpec{alpaka::Vec{Idx{1}}, alpaka::Vec{Idx{1}}, TAcc{}};
-    alpaka::exec<TAcc>(
-        queue,
+    queue.enqueue(
         workDivSingleThread,
         Destroy{},
         accessBlock,
@@ -334,8 +345,7 @@ auto checkContent(
     auto const chunkSize)
 {
     auto results = makeBuffer<bool>(devHost, devAcc, pointers.m_extents[0]);
-    alpaka::exec<TAcc>(
-        queue,
+    queue.enqueue(
         workDiv,
         CheckContent{},
         alpaka::getPtrNative(content.m_onDevice),
@@ -368,8 +378,7 @@ auto getAvailableSlots(auto* accessBlock, auto& queue, auto const& devHost, auto
     alpaka::wait(queue);
     auto result = makeBuffer<uint32_t>(devHost, devAcc, 1U);
     alpaka::wait(queue);
-    alpaka::exec<TAcc>(
-        queue,
+    queue.enqueue(
         workDivSingleThread,
         GetAvailableSlots{},
         accessBlock,
@@ -524,7 +533,7 @@ template<typename TAcc>
 auto customExec(auto& queue, auto const& devAcc, auto const numElements, auto... args)
 {
     auto workDiv = createWorkDiv<TAcc>(devAcc, numElements, args...);
-    alpaka::exec<TAcc>(queue, workDiv, args...);
+    queue.enqueue(workDiv, args...);
     return workDiv;
 }
 
@@ -624,15 +633,13 @@ TEMPLATE_LIST_TEST_CASE("Threaded Scatter", "", alpaka::EnabledAccTags)
         // Now, pointer1 is the last valid pointer to page 0. Destroying it will clean up the page.
         auto const workDivSingleThread = alpaka::onHost::ThreadSpec{alpaka::Vec{Idx{1}}, alpaka::Vec{Idx{1}}, Acc{}};
 
-        alpaka::exec<Acc>(
-            queue,
+        queue.enqueue(
             workDivSingleThread,
             Destroy{},
             accessBlock,
             span<void*>(alpaka::getPtrNative(pointers.m_onDevice), pointers.m_extents[0]));
 
-        alpaka::exec<Acc>(
-            queue,
+        queue.enqueue(
             workDivSingleThread,
             CreateUntilSuccess{},
             accessBlock,
@@ -664,8 +671,7 @@ TEMPLATE_LIST_TEST_CASE("Threaded Scatter", "", alpaka::EnabledAccTags)
         auto const beforeDestroy1
             = getAvailableSlots<Acc>(accessBlock, queue, devHost, devAcc, chunkSizes.m_onHost[1]);
 
-        alpaka::exec<Acc>(
-            queue,
+        queue.enqueue(
             workDiv,
             Destroy{},
             accessBlock,
@@ -693,8 +699,7 @@ TEMPLATE_LIST_TEST_CASE("Threaded Scatter", "", alpaka::EnabledAccTags)
 
         auto const beforeDestroy = getAvailableSlots<Acc>(accessBlock, queue, devHost, devAcc, chunkSizes.m_onHost[0]);
 
-        alpaka::exec<Acc>(
-            queue,
+        queue.enqueue(
             workDiv,
             Destroy{},
             accessBlock,

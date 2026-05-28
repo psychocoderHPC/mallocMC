@@ -224,4 +224,19 @@ namespace alpaka
     {
         return onHost::data(ALPAKA_FORWARD(view));
     }
+
+    namespace math
+    {
+        template<typename TAcc, typename T>
+        constexpr auto min(TAcc const&, T const& a, T const& b)
+        {
+            return ::alpaka::math::min(a, b);
+        }
+
+        template<typename TAcc, typename T>
+        constexpr auto max(TAcc const&, T const& a, T const& b)
+        {
+            return ::alpaka::math::max(a, b);
+        }
+    } // namespace math
 } // namespace alpaka
