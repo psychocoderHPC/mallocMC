@@ -21,7 +21,7 @@ endif()
 
 # ---- Create standalone executable ----
 
-alpaka_add_executable(${PROJECT_NAME} ${CMAKE_CURRENT_SOURCE_DIR}/source/main.cpp)
+add_executable(${PROJECT_NAME} ${CMAKE_CURRENT_SOURCE_DIR}/source/main.cpp)
 
 set_target_properties(${PROJECT_NAME}
     PROPERTIES
@@ -32,4 +32,5 @@ set_target_properties(${PROJECT_NAME}
 )
 
 target_link_libraries(${PROJECT_NAME} mallocMC::mallocMC alpaka::alpaka)
+alpaka_finalize(${PROJECT_NAME})
 add_test(NAME ${PROJECT_NAME} COMMAND ${PROJECT_NAME})

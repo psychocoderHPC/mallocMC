@@ -43,12 +43,8 @@ namespace mallocMC
     // to other architectures.
     namespace detail
     {
-        using Dim = alpaka::DimInt<1>;
-        using Idx = std::uint32_t;
-        using Acc = alpaka::AccGpuCudaRt<Dim, Idx>;
-
-        // Hide the alpaka-specific Acc argument of `ReservePoolPolicies::AlpakaBuf`.
-        using CudaAlpakaBuf = ReservePoolPolicies::AlpakaBuf<Acc>;
+        using CudaExecutor = alpaka::exec::GpuCuda;
+        using CudaAlpakaBuf = ReservePoolPolicies::AlpakaBuf;
 
         /**
          * @brief Allocator template with hidden alpaka-specifics.
@@ -60,7 +56,7 @@ namespace mallocMC
             typename T_ReservePoolPolicy = CudaAlpakaBuf,
             typename T_AlignmentPolicy = AlignmentPolicies::Shrink<>>
         using CudaAllocator = Allocator<
-            alpaka::AccToTag<Acc>,
+            CudaExecutor,
             T_CreationPolicy,
             T_DistributionPolicy,
             T_OOMPolicy,
@@ -77,7 +73,7 @@ namespace mallocMC
             typename T_CreationPolicy = CreationPolicies::FlatterScatter<>,
             typename T_DistributionPolicy = DistributionPolicies::Noop,
             typename T_OOMPolicy = OOMPolicies::ReturnNull,
-            typename T_ReservePoolPolicy = ReservePoolPolicies::AlpakaBuf<Acc>,
+            typename T_ReservePoolPolicy = ReservePoolPolicies::AlpakaBuf,
             typename T_AlignmentPolicy = AlignmentPolicies::Shrink<>>
         struct CudaHostInfrastructure
         {
@@ -93,9 +89,11 @@ namespace mallocMC
             size_t heapSize{};
 
             // All of this is necessary alpaka infrastructure.
-            alpaka::Platform<Acc> const platform{};
-            std::remove_cv_t<decltype(alpaka::getDevByIdx(platform, 0))> const dev{alpaka::getDevByIdx(platform, 0)};
-            alpaka::Queue<Acc, alpaka::NonBlocking> queue{dev};
+            decltype(alpaka::onHost::makeDeviceSelector(alpaka::api::cuda, alpaka::deviceKind::nvidiaGpu)) const
+                selector{alpaka::onHost::makeDeviceSelector(alpaka::api::cuda, alpaka::deviceKind::nvidiaGpu)};
+            std::remove_cv_t<decltype(selector.makeDevice(0))> const dev{selector.makeDevice(0)};
+            decltype(dev.makeQueue(alpaka::queueKind::nonBlocking)) queue{
+                dev.makeQueue(alpaka::queueKind::nonBlocking)};
 
             // This is our actual host-side instance of the allocator. It sets up everything on the device and provides
             // the handle that we can pass to kernels.
@@ -113,7 +111,7 @@ namespace mallocMC
             typename T_CreationPolicy = CreationPolicies::FlatterScatter<>,
             typename T_DistributionPolicy = DistributionPolicies::Noop,
             typename T_OOMPolicy = OOMPolicies::ReturnNull,
-            typename T_ReservePoolPolicy = ReservePoolPolicies::AlpakaBuf<Acc>,
+            typename T_ReservePoolPolicy = ReservePoolPolicies::AlpakaBuf,
             typename T_AlignmentPolicy = AlignmentPolicies::Shrink<>>
         struct CudaMemoryManager
         {
@@ -142,11 +140,7 @@ namespace mallocMC
              */
             __device__ __forceinline__ void* malloc(size_t size)
             {
-                // This is cheating a tiny little bit. The accelerator could, in general, be a stateful object but
-                // concretely for CUDA and HIP it just forwards to the corresponding API calls, so it doesn't actually
-                // carry any information by itself. We're rather using it as a tag here.
-                std::array<std::byte, sizeof(Acc)> fakeAccMemory{};
-                return deviceHandle.malloc(*reinterpret_cast<Acc*>(fakeAccMemory.data()), size);
+                return deviceHandle.malloc(alpaka::onAcc::Acc{}, size);
             }
 
             /**
@@ -156,8 +150,7 @@ namespace mallocMC
              */
             __device__ __forceinline__ void free(void* ptr)
             {
-                std::array<std::byte, sizeof(Acc)> fakeAccMemory{};
-                deviceHandle.free(*reinterpret_cast<Acc*>(fakeAccMemory.data()), ptr);
+                deviceHandle.free(alpaka::onAcc::Acc{}, ptr);
             }
 
             /**

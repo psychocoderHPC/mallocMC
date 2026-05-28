@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.14...3.22)
+cmake_minimum_required(VERSION 3.22...3.30)
 
 # ---- Project ----
 
@@ -21,6 +21,7 @@ endif()
 
 option(mallocMC_BUILD_TESTING "Turn on/off building the tests" OFF)
 option(mallocMC_BUILD_EXAMPLES "Turn on/off building the examples" OFF)
+option(mallocMC_INSTALL "Turn on/off install/export target generation" ON)
 if (mallocMC_BUILD_TESTING OR mallocMC_BUILD_EXAMPLES)
   enable_testing()
 endif()
@@ -34,6 +35,7 @@ endif()
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/PackageProject.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/CPM_0.40.2.cmake)
 CPMUsePackageLock(${CMAKE_CURRENT_LIST_DIR}/cmake/package-lock.cmake)
+include(/workspace/cmake/finalize.cmake)
 
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/add_controlled.cmake)
 
@@ -45,6 +47,7 @@ add_controlled("alpaka" REQUIRED)
 
 # Note: for header-only libraries change all PUBLIC flags to INTERFACE and create an interface
 add_library(${PROJECT_NAME} INTERFACE)
+add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD 20)
 
 if(alpaka_ACC_GPU_CUDA_ENABLE)
@@ -107,15 +110,17 @@ endif()
 
 # the location where the project's version header will be placed should match the project's regular
 # header paths
-string(TOLOWER ${PROJECT_NAME}/version.hpp VERSION_HEADER_LOCATION)
+if(mallocMC_INSTALL)
+  string(TOLOWER ${PROJECT_NAME}/version.hpp VERSION_HEADER_LOCATION)
 
-packageProject(
-  NAME ${PROJECT_NAME}
-  VERSION ${PROJECT_VERSION}
-  NAMESPACE ${PROJECT_NAME}
-  BINARY_DIR ${PROJECT_BINARY_DIR}
-  INCLUDE_DIR ${PROJECT_SOURCE_DIR}/include
-  INCLUDE_DESTINATION include/${PROJECT_NAME}-${PROJECT_VERSION}
-  VERSION_HEADER "${VERSION_HEADER_LOCATION}"
-  COMPATIBILITY SameMajorVersion
-)
+  packageProject(
+    NAME ${PROJECT_NAME}
+    VERSION ${PROJECT_VERSION}
+    NAMESPACE ${PROJECT_NAME}
+    BINARY_DIR ${PROJECT_BINARY_DIR}
+    INCLUDE_DIR ${PROJECT_SOURCE_DIR}/include
+    INCLUDE_DESTINATION include/${PROJECT_NAME}-${PROJECT_VERSION}
+    VERSION_HEADER "${VERSION_HEADER_LOCATION}"
+    COMPATIBILITY SameMajorVersion
+  )
+endif()

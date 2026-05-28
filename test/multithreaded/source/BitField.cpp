@@ -26,9 +26,7 @@
 
 #include "mocks.hpp"
 
-#include <alpaka/acc/AccCpuThreads.hpp>
-#include <alpaka/atomic/AtomicAtomicRef.hpp>
-#include <alpaka/atomic/Traits.hpp>
+#include <alpaka/alpaka.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>

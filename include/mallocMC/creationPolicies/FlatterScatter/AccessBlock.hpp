@@ -31,15 +31,7 @@
 #include "mallocMC/creationPolicies/FlatterScatter/PageInterpretation.hpp"
 #include "mallocMC/mallocMC_utils.hpp"
 
-#include <alpaka/core/Common.hpp>
-#include <alpaka/core/Positioning.hpp>
-#include <alpaka/idx/Accessors.hpp>
-#include <alpaka/kernel/Traits.hpp>
-#include <alpaka/mem/fence/Traits.hpp>
-#include <alpaka/mem/view/Traits.hpp>
-#include <alpaka/mem/view/ViewPlainPtr.hpp>
-#include <alpaka/vec/Vec.hpp>
-#include <alpaka/workdiv/WorkDivMembers.hpp>
+#include <alpaka/alpaka.hpp>
 
 #include <sys/types.h>
 

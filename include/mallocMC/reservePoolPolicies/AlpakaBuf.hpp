@@ -28,28 +28,28 @@
 
 #pragma once
 
+#include "mallocMC/detail/alpaka3_host.hpp"
+
 #include <alpaka/alpaka.hpp>
 
-#include <memory>
 #include <string>
 
 namespace mallocMC
 {
     namespace ReservePoolPolicies
     {
-        template<typename AlpakaAcc>
         struct AlpakaBuf
         {
             template<typename AlpakaDev>
             auto setMemPool(AlpakaDev const& dev, size_t memsize) -> void*
             {
-                poolBuffer = std::make_unique<PoolBufferType>(alpaka::allocBuf<unsigned char, size_t>(dev, memsize));
-                return alpaka::getPtrNative(*poolBuffer);
+                poolBuffer.allocate(dev, memsize);
+                return poolBuffer.ptr;
             }
 
             void resetMemPool()
             {
-                poolBuffer = {};
+                poolBuffer.reset();
             }
 
             static auto classname() -> std::string
@@ -58,8 +58,7 @@ namespace mallocMC
             }
 
         private:
-            using PoolBufferType = alpaka::Buf<alpaka::Dev<AlpakaAcc>, unsigned char, alpaka::DimInt<1>, size_t>;
-            std::unique_ptr<PoolBufferType> poolBuffer; // FIXME(bgruber): replace by std::optional<>
+            detail::DeviceAllocation<unsigned char> poolBuffer;
         };
     } // namespace ReservePoolPolicies
 } // namespace mallocMC

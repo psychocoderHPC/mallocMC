@@ -38,7 +38,7 @@
 #include "XMallocSIMD.hpp"
 
 #include <alpaka/alpaka.hpp>
-#include <alpaka/warp/Traits.hpp>
+#include <alpaka/alpaka.hpp>
 
 #include <cstdint>
 #include <limits>

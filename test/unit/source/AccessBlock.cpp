@@ -32,16 +32,7 @@
 #include "mallocMC/span.hpp"
 #include "mocks.hpp"
 
-#include <alpaka/acc/AccCpuSerial.hpp>
-#include <alpaka/core/Common.hpp>
-#include <alpaka/dev/Traits.hpp>
-#include <alpaka/dim/DimIntegralConst.hpp>
-#include <alpaka/example/ExampleDefaultAcc.hpp>
-#include <alpaka/kernel/Traits.hpp>
-#include <alpaka/platform/PlatformCpu.hpp>
-#include <alpaka/platform/Traits.hpp>
-#include <alpaka/queue/Properties.hpp>
-#include <alpaka/queue/Traits.hpp>
+#include <alpaka/alpaka.hpp>
 
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>

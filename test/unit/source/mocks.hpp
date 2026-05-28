@@ -26,24 +26,37 @@
 
 #pragma once
 
-#include <alpaka/acc/AccCpuSerial.hpp>
-#include <alpaka/atomic/AtomicAtomicRef.hpp>
-#include <alpaka/dim/DimIntegralConst.hpp>
-#include <alpaka/idx/Accessors.hpp>
-#include <alpaka/intrinsic/IntrinsicFallback.hpp>
-#include <alpaka/mem/fence/Traits.hpp>
-#include <alpaka/vec/Vec.hpp>
+#include <alpaka/alpaka.hpp>
 
-// This is very hacky: AccCpuSerial (and in general all Accellerators) are very reluctant to be instantiated, so we do
-// it the oldschool way and simply malloc some memory pretending to be that accellerator. Let's hope that null-ing it
-// is a valid initialisation. The final class only has one mutable data member, so that's probably not half bad but I
-// didn't go through all those hundreds of base classes. Usually, we only need the time anyways.
+#include <cstdint>
+#include <functional>
+
 inline auto constructAcc()
 {
-    using Acc = alpaka::AccCpuSerial<alpaka::DimInt<1U>, size_t>;
-    void* myPointer = malloc(sizeof(Acc));
-    memset(myPointer, 0U, sizeof(Acc));
-    return static_cast<Acc*>(myPointer);
+    static auto blockIdx = alpaka::Vec{size_t{0}};
+    static auto blockCount = alpaka::Vec{size_t{1}};
+    static alpaka::onAcc::cpu::detail::SharedStorage<1u> blockSharedMem{};
+    static std::uint32_t dynSharedMemBytes = 0u;
+
+    auto storage = alpaka::joinDict(
+        alpaka::Dict{
+            alpaka::DictEntry{
+                alpaka::layer::block,
+                alpaka::onAcc::cpu::GenericLayer{std::cref(blockIdx), std::cref(blockCount)}},
+            alpaka::DictEntry{alpaka::layer::thread, alpaka::onAcc::cpu::OneLayer<alpaka::CVec<size_t, 1u>>{}},
+            alpaka::DictEntry{alpaka::layer::shared, std::ref(blockSharedMem)},
+            alpaka::DictEntry{alpaka::action::threadBlockSync, alpaka::onAcc::cpu::NoOp{}},
+            alpaka::DictEntry{alpaka::object::launchedWidthFrameSpec, std::false_type{}},
+            alpaka::DictEntry{alpaka::object::api, alpaka::api::host},
+            alpaka::DictEntry{alpaka::object::deviceKind, alpaka::deviceKind::cpu},
+            alpaka::DictEntry{alpaka::object::exec, alpaka::exec::cpuSerial},
+            alpaka::DictEntry{alpaka::object::warpSize, std::integral_constant<std::uint32_t, 1u>{}}},
+        alpaka::Dict{
+            alpaka::DictEntry{alpaka::layer::dynShared, std::ref(blockSharedMem)},
+            alpaka::DictEntry{alpaka::object::dynSharedMemBytes, std::ref(dynSharedMemBytes)}});
+
+    using Acc = decltype(alpaka::onAcc::Acc(storage));
+    return new Acc{storage};
 }
 
 //

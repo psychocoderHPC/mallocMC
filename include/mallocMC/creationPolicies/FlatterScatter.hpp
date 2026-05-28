@@ -27,20 +27,9 @@
 #pragma once
 
 #include "mallocMC/creationPolicies/FlatterScatter/AccessBlock.hpp"
+#include "mallocMC/detail/alpaka3_host.hpp"
 
-#include <alpaka/core/Common.hpp>
-#include <alpaka/core/Positioning.hpp>
-#include <alpaka/extent/Traits.hpp>
-#include <alpaka/idx/Accessors.hpp>
-#include <alpaka/idx/MapIdx.hpp>
-#include <alpaka/kernel/Traits.hpp>
-#include <alpaka/mem/fence/Traits.hpp>
-#include <alpaka/mem/view/Traits.hpp>
-#include <alpaka/mem/view/ViewPlainPtr.hpp>
-#include <alpaka/vec/Vec.hpp>
-#include <alpaka/workdiv/Traits.hpp>
-#include <alpaka/workdiv/WorkDivHelpers.hpp>
-#include <alpaka/workdiv/WorkDivMembers.hpp>
+#include <alpaka/alpaka.hpp>
 
 #include <sys/types.h>
 
@@ -94,7 +83,7 @@ namespace mallocMC::CreationPolicies::FlatterScatterAlloc
             -> void
         {
             auto threadsInGrid = alpaka::getWorkDiv<alpaka::Grid, alpaka::Threads>(acc);
-            auto numThreads = threadsInGrid.prod();
+            auto numThreads = threadsInGrid.product();
             auto const [idx] = alpaka::mapIdx<1U>(alpaka::getIdx<alpaka::Grid, alpaka::Threads>(acc), threadsInGrid);
             auto* accessBlocks = static_cast<MyAccessBlock*>(accessBlocksPointer);
 
@@ -340,10 +329,10 @@ namespace mallocMC::CreationPolicies::FlatterScatterAlloc
             void* m_heapmem,
             size_t const m_memsize) const
         {
-            auto const idx = alpaka::mapIdx<1U>(
+            auto const [idx] = alpaka::mapIdx<1U>(
                 alpaka::getIdx<alpaka::Grid, alpaka::Threads>(acc),
                 alpaka::getWorkDiv<alpaka::Grid, alpaka::Threads>(acc));
-            if(idx == 0)
+            if(idx == 0u)
             {
                 m_heap->accessBlocks
                     = static_cast<Heap<T_HeapConfig, T_HashConfig, T_AlignmentPolicy>::MyAccessBlock*>(m_heapmem);
@@ -406,7 +395,7 @@ namespace mallocMC::CreationPolicies
          * @param pool The pointer to the provided memory pool to be used by the `Heap` object.
          * @param memsize The size of the pool memory in bytes.
          */
-        template<typename TAcc>
+        template<typename TExecutor>
         static void initHeap([[maybe_unused]] auto& dev, auto& queue, auto* heap, void* pool, size_t memsize)
         {
             using MyHeap = FlatterScatterAlloc::Heap<T_HeapConfig, T_HashConfig, T_AlignmentPolicy>;
@@ -418,13 +407,10 @@ namespace mallocMC::CreationPolicies
                 return;
             }
             auto numPagesPerBlock = MyHeap::MyAccessBlock::numPages();
-
-            alpaka::KernelCfg<TAcc> const kernelCfg
-                = {numBlocks * numPagesPerBlock, 1U, false, alpaka::GridBlockExtentSubDivRestrictions::Unrestricted};
-            auto workDiv
-                = alpaka::getValidWorkDiv(kernelCfg, dev, FlatterScatterAlloc::InitKernel{}, heap, pool, memsize);
-            alpaka::exec<TAcc>(queue, workDiv, FlatterScatterAlloc::InitKernel{}, heap, pool, memsize);
-            alpaka::wait(queue);
+            queue.enqueue(
+                detail::make1DThreadSpec<TExecutor>(numBlocks * numPagesPerBlock, 1u),
+                alpaka::KernelBundle{FlatterScatterAlloc::InitKernel{}, heap, pool, memsize});
+            alpaka::onHost::wait(queue);
         }
 
         /**
@@ -439,39 +425,30 @@ namespace mallocMC::CreationPolicies
          * @param heap Pointer to the `Heap` object that's supposed to handle the request.
          * @return The number of allocations that would be successful with this slotSize.
          */
-        template<typename AlpakaAcc, typename AlpakaDevice, typename AlpakaQueue, typename T_DeviceAllocator>
+        template<typename TExecutor, typename AlpakaDevice, typename AlpakaQueue, typename T_DeviceAllocator>
         static auto getAvailableSlotsHost(
             AlpakaDevice& dev,
             AlpakaQueue& queue,
             uint32_t const slotSize,
             T_DeviceAllocator* heap) -> unsigned
         {
-            using Dim = typename alpaka::trait::DimType<AlpakaAcc>::type;
-            using Idx = typename alpaka::trait::IdxType<AlpakaAcc>::type;
-            using VecType = alpaka::Vec<Dim, Idx>;
+            detail::DeviceAllocation<size_t> d_slots;
+            d_slots.allocate(dev, 1u);
+            using DeviceBuffer = decltype(alpaka::onHost::alloc<size_t>(dev, 1u));
+            auto& d_slotsBuffer = std::any_cast<DeviceBuffer&>(d_slots.storage);
+            alpaka::onHost::memset(queue, d_slotsBuffer, 0u);
 
-            auto d_slots = alpaka::allocBuf<size_t, uint32_t>(dev, uint32_t{1});
-            alpaka::memset(queue, d_slots, 0, uint32_t{1});
-            auto d_slotsPtr = alpaka::getPtrNative(d_slots);
+            auto getAvailableSlotsKernel = [heap, slotSize, slots = d_slots.ptr] ALPAKA_FN_ACC(auto const& acc) -> void
+            { *slots = heap->getAvailableSlotsDeviceFunction(acc, slotSize); };
 
-            auto getAvailableSlotsKernel = [heap, slotSize, d_slotsPtr] ALPAKA_FN_ACC(AlpakaAcc const& acc) -> void
-            { *d_slotsPtr = heap->getAvailableSlotsDeviceFunction(acc, slotSize); };
+            queue.enqueue(detail::make1DThreadSpec<TExecutor>(1u, 1u), alpaka::KernelBundle{getAvailableSlotsKernel});
+            alpaka::onHost::wait(queue);
 
-            alpaka::wait(queue);
-            alpaka::exec<AlpakaAcc>(
-                queue,
-                alpaka::WorkDivMembers<Dim, Idx>{VecType::ones(), VecType::ones(), VecType::ones()},
-                getAvailableSlotsKernel);
-            alpaka::wait(queue);
+            auto h_slots = alpaka::onHost::alloc<size_t>(detail::makeHostDevice(), 1u);
+            alpaka::onHost::memcpy(queue, h_slots, d_slotsBuffer);
+            alpaka::onHost::wait(queue);
 
-            auto const platform = alpaka::Platform<alpaka::DevCpu>{};
-            auto const hostDev = alpaka::getDevByIdx(platform, 0);
-
-            auto h_slots = alpaka::allocBuf<size_t, Idx>(hostDev, Idx{1});
-            alpaka::memcpy(queue, h_slots, d_slots);
-            alpaka::wait(queue);
-
-            return *alpaka::getPtrNative(h_slots);
+            return alpaka::onHost::data(h_slots)[0];
         }
     };
 

@@ -31,7 +31,7 @@
 
 #include "mallocMC_traits.hpp"
 
-#include <alpaka/core/Common.hpp>
+#include <alpaka/alpaka.hpp>
 
 #include <cstdint>
 #include <cstdio>

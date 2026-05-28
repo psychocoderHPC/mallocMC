@@ -32,30 +32,24 @@
 #include "mallocMC/oOMPolicies/ReturnNull.hpp"
 #include "mallocMC/reservePoolPolicies/AlpakaBuf.hpp"
 
-#include <alpaka/example/ExampleDefaultAcc.hpp>
+#include <alpaka/alpaka.hpp>
 
 #include <catch2/catch_test_macros.hpp>
-#include <mallocMC/mallocMC.hpp>
-using Dim = alpaka::DimInt<1>;
-using Idx = std::size_t;
-
-// Define the device accelerator
-using Acc = alpaka::ExampleDefaultAcc<Dim, Idx>;
 
 TEST_CASE("Allocator")
 {
     SECTION("can be initialised with 0 memory.")
     {
-        auto const platform = alpaka::Platform<Acc>{};
-        auto const dev = alpaka::getDevByIdx(platform, 0);
-        auto queue = alpaka::Queue<Acc, alpaka::Blocking>{dev};
+        auto selector = alpaka::onHost::makeDeviceSelector(alpaka::api::host, alpaka::deviceKind::cpu);
+        auto dev = selector.makeDevice(0);
+        auto queue = dev.makeQueue(alpaka::queueKind::blocking);
 
         mallocMC::Allocator<
-            alpaka::AccToTag<Acc>,
+            alpaka::exec::CpuSerial,
             mallocMC::CreationPolicies::FlatterScatter<>,
             mallocMC::DistributionPolicies::Noop,
             mallocMC::OOMPolicies::ReturnNull,
-            mallocMC::ReservePoolPolicies::AlpakaBuf<Acc>,
+            mallocMC::ReservePoolPolicies::AlpakaBuf,
             mallocMC::AlignmentPolicies::Shrink<>>
             allocator{dev, queue, 0};
     }

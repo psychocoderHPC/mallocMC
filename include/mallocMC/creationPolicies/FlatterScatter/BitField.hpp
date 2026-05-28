@@ -30,8 +30,7 @@
 #include "mallocMC/mallocMC_utils.hpp"
 #include "mallocMC/span.hpp"
 
-#include <alpaka/core/Common.hpp>
-#include <alpaka/intrinsic/Traits.hpp>
+#include <alpaka/alpaka.hpp>
 
 #include <sys/types.h>
 

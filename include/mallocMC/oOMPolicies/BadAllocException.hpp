@@ -29,7 +29,7 @@
 
 #include "BadAllocException.hpp"
 
-#include <alpaka/core/Common.hpp>
+#include <alpaka/alpaka.hpp>
 
 #include <cassert>
 #include <string>

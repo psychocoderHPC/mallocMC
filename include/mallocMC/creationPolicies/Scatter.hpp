@@ -35,10 +35,9 @@
 #pragma once
 
 #include "../mallocMC_utils.hpp"
+#include "../detail/alpaka3_host.hpp"
 
 #include <alpaka/alpaka.hpp>
-#include <alpaka/intrinsic/Traits.hpp>
-#include <alpaka/mem/fence/Traits.hpp>
 
 #include <atomic>
 #include <cassert>
@@ -1027,8 +1026,11 @@ namespace mallocMC
             template<typename AlpakaAcc>
             ALPAKA_FN_ACC void initDeviceFunction(AlpakaAcc const& acc, void* memory, size_t memsize)
             {
-                auto const linid = alpaka::getIdx<alpaka::Grid, alpaka::Threads>(acc).sum();
-                auto const totalThreads = alpaka::getWorkDiv<alpaka::Grid, alpaka::Threads>(acc).prod();
+                auto const threadsInGrid = alpaka::getWorkDiv<alpaka::Grid, alpaka::Threads>(acc);
+                auto const linid = alpaka::linearize(
+                    threadsInGrid,
+                    alpaka::getIdx<alpaka::Grid, alpaka::Threads>(acc));
+                auto const totalThreads = threadsInGrid.product();
 
                 uint32 numregions = ((unsigned long long) memsize)
                                     / (((unsigned long long) regionsize) * (sizeof(PTE) + pagesize) + sizeof(uint32));
@@ -1098,7 +1100,7 @@ namespace mallocMC
                 return s && (p == nullptr);
             }
 
-            template<typename AlpakaAcc, typename AlpakaDevice, typename AlpakaQueue, typename T_DeviceAllocator>
+            template<typename TExecutor, typename AlpakaDevice, typename AlpakaQueue, typename T_DeviceAllocator>
             static void initHeap(
                 AlpakaDevice& dev,
                 AlpakaQueue& queue,
@@ -1114,26 +1116,14 @@ namespace mallocMC
                                                 "or AlignmentPolicy.");
                 }
                 auto initKernel = [] ALPAKA_FN_ACC(
-                                      AlpakaAcc const& m_acc,
+                                      auto const& m_acc,
                                       T_DeviceAllocator* m_heap,
                                       void* m_heapmem,
                                       size_t m_memsize) { m_heap->initDeviceFunction(m_acc, m_heapmem, m_memsize); };
-                using Dim = typename alpaka::trait::DimType<AlpakaAcc>::type;
-                using Idx = typename alpaka::trait::IdxType<AlpakaAcc>::type;
-                using VecType = alpaka::Vec<Dim, Idx>;
-
-                auto threadsPerBlock = VecType::ones();
-
-                auto const devProps = alpaka::getAccDevProps<AlpakaAcc>(dev);
-
-                threadsPerBlock[Dim::value - 1]
-                    = std::min(static_cast<size_t>(256u), static_cast<size_t>(devProps.m_blockThreadCountMax));
-
-                auto const workDiv = alpaka::WorkDivMembers<Dim, Idx>{
-                    VecType::ones(),
-                    threadsPerBlock,
-                    VecType::ones()}; // Dim may be any dimension, but workDiv is 1D
-                alpaka::enqueue(queue, alpaka::createTaskKernel<AlpakaAcc>(workDiv, initKernel, heap, pool, memsize));
+                auto const threadsPerBlock = std::min<std::uint32_t>(256u, dev.getDeviceProperties().maxThreadsPerBlock);
+                queue.enqueue(
+                    detail::make1DThreadSpec<TExecutor>(1u, threadsPerBlock),
+                    alpaka::KernelBundle{initKernel, heap, pool, memsize});
             }
 
             /** counts how many elements of a size fit inside a given page
@@ -1274,66 +1264,44 @@ namespace mallocMC
              */
 
         public:
-            template<typename AlpakaAcc, typename AlpakaDevice, typename AlpakaQueue, typename T_DeviceAllocator>
+            template<typename TExecutor, typename AlpakaDevice, typename AlpakaQueue, typename T_DeviceAllocator>
             static auto getAvailableSlotsHost(
                 AlpakaDevice& dev,
                 AlpakaQueue& queue,
                 size_t const slotSize,
                 T_DeviceAllocator* heap) -> unsigned
             {
-                auto d_slots = alpaka::allocBuf<unsigned, int>(dev, 1);
-                alpaka::memset(queue, d_slots, 0, 1);
+                detail::DeviceAllocation<unsigned> d_slots;
+                d_slots.allocate(dev, 1u);
+                using DeviceBuffer = decltype(alpaka::onHost::alloc<unsigned>(dev, 1u));
+                auto& d_slotsBuffer = std::any_cast<DeviceBuffer&>(d_slots.storage);
+                alpaka::onHost::memset(queue, d_slotsBuffer, 0u);
 
                 auto getAvailableSlotsKernel = [] ALPAKA_FN_ACC(
-                                                   AlpakaAcc const& acc,
+                                                   auto const& acc,
                                                    T_DeviceAllocator* heapPtr,
                                                    size_t numBytes,
                                                    unsigned* slots) -> void
                 {
-                    auto const gid = alpaka::getIdx<alpaka::Grid, alpaka::Threads>(acc).sum();
-
-                    auto const nWorker = alpaka::getWorkDiv<alpaka::Grid, alpaka::Threads>(acc).prod();
+                    auto const gid = static_cast<std::uint32_t>(alpaka::linearize(
+                        acc.getExtentsOf(alpaka::onAcc::origin::grid, alpaka::onAcc::unit::threads),
+                        acc.getIdxWithin(alpaka::onAcc::origin::grid, alpaka::onAcc::unit::threads)));
+                    auto const nWorker = static_cast<std::uint32_t>(
+                        acc.getExtentsOf(alpaka::onAcc::origin::grid, alpaka::onAcc::unit::threads).product());
                     unsigned const temp = heapPtr->getAvailaibleSlotsDeviceFunction(acc, numBytes, gid, nWorker);
                     if(temp)
                         alpaka::atomicOp<alpaka::AtomicAdd>(acc, slots, temp);
                 };
+                auto const threadsPerBlock = std::min<std::uint32_t>(256u, dev.getDeviceProperties().maxThreadsPerBlock);
+                queue.enqueue(
+                    detail::make1DThreadSpec<TExecutor>(64u, threadsPerBlock),
+                    alpaka::KernelBundle{getAvailableSlotsKernel, heap, slotSize, d_slots.ptr});
 
-                using Dim = typename alpaka::trait::DimType<AlpakaAcc>::type;
-                using Idx = typename alpaka::trait::IdxType<AlpakaAcc>::type;
+                auto h_slots = alpaka::onHost::alloc<unsigned>(detail::makeHostDevice(), 1u);
+                alpaka::onHost::memcpy(queue, h_slots, d_slotsBuffer);
+                alpaka::onHost::wait(queue);
 
-                using VecType = alpaka::Vec<Dim, Idx>;
-
-                auto numBlocks = VecType::ones();
-                numBlocks[Dim::value - 1] = 64u;
-                auto threadsPerBlock = VecType::ones();
-
-                auto const devProps = alpaka::getAccDevProps<AlpakaAcc>(dev);
-
-                threadsPerBlock[Dim::value - 1]
-                    = std::min(static_cast<size_t>(256u), static_cast<size_t>(devProps.m_blockThreadCountMax));
-
-                auto const workDiv = alpaka::WorkDivMembers<Dim, Idx>{
-                    numBlocks,
-                    threadsPerBlock,
-                    VecType::ones()}; // Dim may be any dimension, but workDiv is 1D
-
-                alpaka::enqueue(
-                    queue,
-                    alpaka::createTaskKernel<AlpakaAcc>(
-                        workDiv,
-                        getAvailableSlotsKernel,
-                        heap,
-                        slotSize,
-                        alpaka::getPtrNative(d_slots)));
-
-                auto const platform = alpaka::Platform<alpaka::DevCpu>{};
-                auto const hostDev = alpaka::getDevByIdx(platform, 0);
-
-                auto h_slots = alpaka::allocBuf<unsigned, int>(hostDev, 1);
-                alpaka::memcpy(queue, h_slots, d_slots, 1);
-                alpaka::wait(queue);
-
-                return *alpaka::getPtrNative(h_slots);
+                return alpaka::onHost::data(h_slots)[0];
             }
 
             /** Count, how many elements can be allocated at maximum
