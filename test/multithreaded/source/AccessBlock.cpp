@@ -235,9 +235,9 @@ auto setup(auto const& cfg)
     using Device = std::remove_cvref_t<decltype(selector.makeDevice(0))>;
     using Queue = std::remove_cvref_t<decltype(std::declval<Device&>().makeQueue(alpaka::queueKind::blocking))>;
     if(!selector.isAvailable())
-        return std::optional<std::tuple<Device, Device, Queue>>{};
+        return std::optional<std::tuple<Device, ALPAKA_TYPEOF(alpaka::onHost::makeHostDevice()), Queue>>{};
     auto devAcc = selector.makeDevice(0);
-    auto devHost = selector.makeDevice(0);
+    auto devHost = alpaka::onHost::makeHostDevice();
     auto queue = devAcc.makeQueue(alpaka::queueKind::blocking);
     return std::optional{std::make_tuple(devAcc, devHost, queue)};
 }

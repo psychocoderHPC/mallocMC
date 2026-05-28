@@ -33,10 +33,7 @@ endif()
 
 file(GLOB sources CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/source/*.cpp)
 add_executable(${PROJECT_NAME} ${sources})
-<<<<<<< Updated upstream
-=======
 target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/source/")
->>>>>>> Stashed changes
 target_link_libraries(${PROJECT_NAME} mallocMC::mallocMC alpaka::alpaka Catch2::Catch2WithMain)
 set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD 20)
 alpaka_finalize(${PROJECT_NAME})
