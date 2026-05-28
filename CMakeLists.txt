@@ -32,7 +32,6 @@ endif()
 # ---- Add dependencies via CPM ----
 # see https://github.com/TheLartians/CPM.cmake for more info
 
-include(${CMAKE_CURRENT_LIST_DIR}/cmake/PackageProject.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/CPM_0.40.2.cmake)
 CPMUsePackageLock(${CMAKE_CURRENT_LIST_DIR}/cmake/package-lock.cmake)
 
@@ -91,7 +90,12 @@ target_include_directories(
   ${PROJECT_NAME} INTERFACE $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
                          $<INSTALL_INTERFACE:include/${PROJECT_NAME}-${PROJECT_VERSION}>
 )
-target_link_libraries(${PROJECT_NAME} INTERFACE alpaka::alpaka)
+target_link_libraries(
+  ${PROJECT_NAME}
+  INTERFACE
+    $<BUILD_LOCAL_INTERFACE:alpaka::alpaka>
+    $<INSTALL_INTERFACE:alpaka::alpaka>
+)
 
 
 if(mallocMC_BUILD_TESTING)
@@ -110,16 +114,73 @@ endif()
 # the location where the project's version header will be placed should match the project's regular
 # header paths
 if(mallocMC_INSTALL)
-  string(TOLOWER ${PROJECT_NAME}/version.hpp VERSION_HEADER_LOCATION)
+  include(CMakePackageConfigHelpers)
+  include(GNUInstallDirs)
 
-  packageProject(
-    NAME ${PROJECT_NAME}
+  set(mallocMC_INCLUDE_DESTINATION include/${PROJECT_NAME}-${PROJECT_VERSION})
+  set(mallocMC_INSTALL_CMAKEDIR ${CMAKE_INSTALL_DATADIR}/cmake/${PROJECT_NAME}-${PROJECT_VERSION})
+
+  string(TOLOWER ${PROJECT_NAME}/version.hpp VERSION_HEADER_LOCATION)
+  set(mallocMC_VERSION_INCLUDE_DIR ${PROJECT_BINARY_DIR}/PackageProjectInclude)
+
+  string(REGEX MATCH "^([0-9]+)(\\.([0-9]+))?(\\.([0-9]+))?(\\.([0-9]+))?$" _ "${PROJECT_VERSION}")
+  set(PROJECT_VERSION_MAJOR ${CMAKE_MATCH_1})
+  set(PROJECT_VERSION_MINOR ${CMAKE_MATCH_3})
+  set(PROJECT_VERSION_PATCH ${CMAKE_MATCH_5})
+  set(PROJECT_VERSION_TWEAK ${CMAKE_MATCH_7})
+  if(NOT DEFINED PROJECT_VERSION_MAJOR)
+    set(PROJECT_VERSION_MAJOR "0")
+  endif()
+  if(NOT DEFINED PROJECT_VERSION_MINOR)
+    set(PROJECT_VERSION_MINOR "0")
+  endif()
+  if(NOT DEFINED PROJECT_VERSION_PATCH)
+    set(PROJECT_VERSION_PATCH "0")
+  endif()
+  if(NOT DEFINED PROJECT_VERSION_TWEAK)
+    set(PROJECT_VERSION_TWEAK "0")
+  endif()
+
+  string(TOUPPER ${PROJECT_NAME} UPPERCASE_PROJECT_NAME)
+  string(REGEX REPLACE [^a-zA-Z0-9] _ UPPERCASE_PROJECT_NAME ${UPPERCASE_PROJECT_NAME})
+  configure_file(
+    ${CMAKE_CURRENT_LIST_DIR}/cmake/version.h.in
+    ${mallocMC_VERSION_INCLUDE_DIR}/${VERSION_HEADER_LOCATION}
+    @ONLY
+  )
+
+  target_include_directories(${PROJECT_NAME} INTERFACE "$<BUILD_INTERFACE:${mallocMC_VERSION_INCLUDE_DIR}>")
+
+  configure_package_config_file(
+    ${CMAKE_CURRENT_LIST_DIR}/cmake/Config.cmake.in
+    ${PROJECT_BINARY_DIR}/${PROJECT_NAME}Config.cmake
+    INSTALL_DESTINATION ${mallocMC_INSTALL_CMAKEDIR}
+  )
+  configure_file(
+    ${CMAKE_CURRENT_LIST_DIR}/cmake/mallocMCTargets.cmake.in
+    ${PROJECT_BINARY_DIR}/${PROJECT_NAME}Targets.cmake
+    @ONLY
+  )
+  write_basic_package_version_file(
+    ${PROJECT_BINARY_DIR}/${PROJECT_NAME}ConfigVersion.cmake
     VERSION ${PROJECT_VERSION}
-    NAMESPACE ${PROJECT_NAME}
-    BINARY_DIR ${PROJECT_BINARY_DIR}
-    INCLUDE_DIR ${PROJECT_SOURCE_DIR}/include
-    INCLUDE_DESTINATION include/${PROJECT_NAME}-${PROJECT_VERSION}
-    VERSION_HEADER "${VERSION_HEADER_LOCATION}"
     COMPATIBILITY SameMajorVersion
+    ARCH_INDEPENDENT
+  )
+
+  install(
+    DIRECTORY ${PROJECT_SOURCE_DIR}/include/
+              ${mallocMC_VERSION_INCLUDE_DIR}/
+    DESTINATION ${mallocMC_INCLUDE_DESTINATION}
+    COMPONENT "${PROJECT_NAME}_Development"
+    FILES_MATCHING
+    PATTERN "*"
+  )
+  install(
+    FILES ${PROJECT_BINARY_DIR}/${PROJECT_NAME}Config.cmake
+          ${PROJECT_BINARY_DIR}/${PROJECT_NAME}ConfigVersion.cmake
+          ${PROJECT_BINARY_DIR}/${PROJECT_NAME}Targets.cmake
+    DESTINATION ${mallocMC_INSTALL_CMAKEDIR}
+    COMPONENT "${PROJECT_NAME}_Development"
   )
 endif()
