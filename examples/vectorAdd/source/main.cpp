@@ -1,71 +1,46 @@
 /*
   mallocMC: Memory Allocator for Many Core Architectures.
-  https://www.hzdr.de/crp
-
-  Copyright 2014 - 2024 Institute of Radiation Physics,
-                 Helmholtz-Zentrum Dresden - Rossendorf
-
-  Author(s):  Carlchristian Eckert - c.eckert ( at ) hzdr.de
-              Julian Lenz - j.lenz ( at ) hzdr.de
-
-  Permission is hereby granted, free of charge, to any person obtaining a copy
-  of this software and associated documentation files (the "Software"), to deal
-  in the Software without restriction, including without limitation the rights
-  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-  copies of the Software, and to permit persons to whom the Software is
-  furnished to do so, subject to the following conditions:
-
-  The above copyright notice and this permission notice shall be included in
-  all copies or substantial portions of the Software.
-
-  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-  THE SOFTWARE.
 */
 
 #include <alpaka/alpaka.hpp>
-#include <alpaka/example/ExampleDefaultAcc.hpp>
 
-#include <mallocMC/mallocMC.hpp>
+#include <mallocMC/alignmentPolicies/Noop.hpp>
+#include <mallocMC/alignmentPolicies/Shrink.hpp>
+#include <mallocMC/allocator.hpp>
+#include <mallocMC/creationPolicies/FlatterScatter.hpp>
+#include <mallocMC/creationPolicies/OldMalloc.hpp>
+#include <mallocMC/creationPolicies/Scatter.hpp>
+#include <mallocMC/detail/alpaka3_host.hpp>
+#include <mallocMC/distributionPolicies/Noop.hpp>
+#include <mallocMC/oOMPolicies/ReturnNull.hpp>
+#include <mallocMC/reservePoolPolicies/AlpakaBuf.hpp>
+#include <mallocMC/reservePoolPolicies/Noop.hpp>
 
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
+#include <cstdlib>
 #include <iostream>
 #include <numeric>
+#include <type_traits>
 
 using mallocMC::CreationPolicies::FlatterScatter;
 using mallocMC::CreationPolicies::OldMalloc;
 using mallocMC::CreationPolicies::Scatter;
 
-using Dim = alpaka::DimInt<1>;
 using Idx = std::size_t;
 
-// Define the device accelerator
-using Acc = alpaka::ExampleDefaultAcc<Dim, Idx>;
+constexpr std::uint32_t blocksize = 2U * 1024U * 1024U;
+constexpr std::uint32_t pagesize = 4U * 1024U;
+constexpr std::uint32_t wasteFactor = 1U;
 
-constexpr uint32_t const blocksize = 2U * 1024U * 1024U;
-constexpr uint32_t const pagesize = 4U * 1024U;
-constexpr uint32_t const wasteFactor = 1U;
-
-// This happens to also work for the original Scatter algorithm, so we only define one.
 struct FlatterScatterHeapConfig : FlatterScatter<>::Properties::HeapConfig
 {
     static constexpr auto accessblocksize = blocksize;
     static constexpr auto pagesize = ::pagesize;
-    static constexpr auto heapsize = 2U * 1024U * 1024U * 1024U;
-    // Only used by original Scatter (but it doesn't hurt FlatterScatter to keep):
+    static constexpr auto heapsize = 64U * 1024U * 1024U;
     static constexpr auto regionsize = 16;
     static constexpr auto wastefactor = wasteFactor;
-};
-
-struct XMallocConfig
-{
-    static constexpr auto pagesize = FlatterScatterHeapConfig::pagesize;
 };
 
 struct ShrinkConfig
@@ -73,177 +48,149 @@ struct ShrinkConfig
     static constexpr auto dataAlignment = 16;
 };
 
-ALPAKA_STATIC_ACC_MEM_GLOBAL int** arA;
-ALPAKA_STATIC_ACC_MEM_GLOBAL int** arB;
-ALPAKA_STATIC_ACC_MEM_GLOBAL int** arC;
-
-template<
-    typename T_CreationPolicy,
-    typename T_ReservePoolPolicy,
-    typename T_AlignmentPolicy = mallocMC::AlignmentPolicies::Shrink<ShrinkConfig>>
-auto example01() -> int
+template<typename TExecutor>
+auto makeWorkDiv(auto const& devAcc, std::uint32_t numWorkers)
 {
-    using Allocator = mallocMC::Allocator<
-        alpaka::AccToTag<Acc>,
-        T_CreationPolicy,
-        mallocMC::DistributionPolicies::Noop,
-        mallocMC::OOMPolicies::ReturnNull,
-        T_ReservePoolPolicy,
-        T_AlignmentPolicy>;
-
-    constexpr auto length = 100;
-
-    auto const platform = alpaka::Platform<Acc>{};
-    auto const dev = alpaka::getDevByIdx(platform, 0);
-    auto queue = alpaka::Queue<Acc, alpaka::Blocking>{dev};
-
-    auto const devProps = alpaka::getAccDevProps<Acc>(dev);
-    unsigned const block = std::min(static_cast<size_t>(32U), static_cast<size_t>(devProps.m_blockThreadCountMax));
-
-    // round up
-    auto grid = (length + block - 1U) / block;
-    assert(length <= block * grid); // necessary for used algorithm
-
-    // init the heap
-    std::cerr << "initHeap...";
-    auto const heapSize = 2U * 1024U * 1024U * 1024U;
-    Allocator scatterAlloc(dev, queue, heapSize); // 1GB for device-side malloc
-    std::cerr << "done\n";
-    std::cout << Allocator::info("\n") << '\n';
-
-    // create arrays of arrays on the device
+    auto threads = std::max<Idx>(
+        1u,
+        std::min<Idx>(static_cast<Idx>(numWorkers), devAcc.getDeviceProperties().maxThreadsPerBlock));
+    auto blocks = std::max<Idx>(1u, static_cast<Idx>((numWorkers + threads - 1u) / threads));
+    if constexpr(
+        std::is_same_v<TExecutor, alpaka::exec::CpuSerial>
+#ifndef ALPAKA_DISABLE_EXEC_CpuOmpBlocks
+        || std::is_same_v<TExecutor, alpaka::exec::CpuOmpBlocks>
+#endif
+#ifndef ALPAKA_DISABLE_EXEC_CpuTbbBlocks
+        || std::is_same_v<TExecutor, alpaka::exec::CpuTbbBlocks>
+#endif
+    )
     {
-        auto createArrayPointers
-            = [] ALPAKA_FN_ACC(Acc const& acc, int x, int y, Allocator::AllocatorHandle allocHandle)
-        {
-            arA<Acc> = static_cast<int**>(allocHandle.malloc(acc, sizeof(int*) * x * y));
-            arB<Acc> = static_cast<int**>(allocHandle.malloc(acc, sizeof(int*) * x * y));
-            arC<Acc> = static_cast<int**>(allocHandle.malloc(acc, sizeof(int*) * x * y));
-        };
-        auto const workDiv = alpaka::WorkDivMembers<Dim, Idx>{Idx{1}, Idx{1}, Idx{1}};
-        alpaka::enqueue(
-            queue,
-            alpaka::createTaskKernel<Acc>(
-                workDiv,
-                createArrayPointers,
-                grid,
-                block,
-                scatterAlloc.getAllocatorHandle()));
+        blocks *= threads;
+        threads = 1u;
     }
-
-    // fill 2 of them all with ascending values
-    {
-        auto fillArrays = [] ALPAKA_FN_ACC(Acc const& acc, int localLength, Allocator::AllocatorHandle allocHandle)
-        {
-            auto const id = alpaka::getIdx<alpaka::Grid, alpaka::Threads>(acc)[0];
-
-            arA<Acc>[id] = static_cast<int*>(allocHandle.malloc(acc, localLength * sizeof(int)));
-            arB<Acc>[id] = static_cast<int*>(allocHandle.malloc(acc, localLength * sizeof(int)));
-            arC<Acc>[id] = static_cast<int*>(allocHandle.malloc(acc, localLength * sizeof(int)));
-
-            for(int i = 0; i < localLength; ++i)
-            {
-                arA<Acc>[id][i] = static_cast<int>(id * localLength + i);
-                arB<Acc>[id][i] = static_cast<int>(id * localLength + i);
-            }
-        };
-        auto const workDiv = alpaka::WorkDivMembers<Dim, Idx>{Idx{grid}, Idx{block}, Idx{1}};
-        alpaka::enqueue(
-            queue,
-            alpaka::createTaskKernel<Acc>(workDiv, fillArrays, length, scatterAlloc.getAllocatorHandle()));
-    }
-
-    // add the 2 arrays (vector addition within each thread)
-    // and do a thread-wise reduce to sums
-    {
-        auto sumsBufferAcc = alpaka::allocBuf<int, Idx>(dev, Idx{block * grid});
-
-        auto addArrays = [] ALPAKA_FN_ACC(Acc const& acc, int localLength, int* sums)
-        {
-            auto const id = alpaka::getIdx<alpaka::Grid, alpaka::Threads>(acc)[0];
-
-            sums[id] = 0;
-            for(int i = 0; i < localLength; ++i)
-            {
-                arC<Acc>[id][i] = arA<Acc>[id][i] + arB<Acc>[id][i];
-                sums[id] += arC<Acc>[id][i];
-            }
-        };
-        auto const workDiv = alpaka::WorkDivMembers<Dim, Idx>{Idx{grid}, Idx{block}, Idx{1}};
-        alpaka::enqueue(
-            queue,
-            alpaka::createTaskKernel<Acc>(workDiv, addArrays, length, alpaka::getPtrNative(sumsBufferAcc)));
-
-        auto const platformCPU = alpaka::Platform<alpaka::DevCpu>{};
-        auto const hostDev = alpaka::getDevByIdx(platformCPU, 0);
-
-        auto sumsBufferHost = alpaka::allocBuf<int, Idx>(hostDev, Idx{block * grid});
-        alpaka::memcpy(queue, sumsBufferHost, sumsBufferAcc, Idx{block * grid});
-        alpaka::wait(queue);
-
-        auto const* sumsPtr = alpaka::getPtrNative(sumsBufferHost);
-        auto const sum = std::accumulate(sumsPtr, sumsPtr + block * grid, size_t{0});
-        std::cout << "The sum of the arrays on GPU is " << sum << '\n';
-    }
-
-    auto const n = static_cast<size_t>(block * grid * length);
-    auto const gaussian = n * (n - 1);
-    std::cout << "The gaussian sum as comparison: " << gaussian << '\n';
-
-    /*constexpr*/ if(mallocMC::Traits<Allocator>::providesAvailableSlots)
-    {
-        std::cout << "there are ";
-        std::cout << scatterAlloc.getAvailableSlots(dev, queue, 1024U * 1024U);
-        std::cout << " Slots of size 1MB available\n";
-    }
-
-    {
-        auto freeArrays = [] ALPAKA_FN_ACC(Acc const& acc, Allocator::AllocatorHandle allocHandle)
-        {
-            auto const id = alpaka::getIdx<alpaka::Grid, alpaka::Threads>(acc)[0];
-            allocHandle.free(acc, arA<Acc>[id]);
-            allocHandle.free(acc, arB<Acc>[id]);
-            allocHandle.free(acc, arC<Acc>[id]);
-        };
-        auto const workDiv = alpaka::WorkDivMembers<Dim, Idx>{Idx{grid}, Idx{block}, Idx{1}};
-        alpaka::enqueue(queue, alpaka::createTaskKernel<Acc>(workDiv, freeArrays, scatterAlloc.getAllocatorHandle()));
-    }
-
-    {
-        auto freeArrayPointers = [] ALPAKA_FN_ACC(Acc const& acc, Allocator::AllocatorHandle allocHandle)
-        {
-            allocHandle.free(acc, arA<Acc>);
-            allocHandle.free(acc, arB<Acc>);
-            allocHandle.free(acc, arC<Acc>);
-        };
-        auto const workDiv = alpaka::WorkDivMembers<Dim, Idx>{Idx{1}, Idx{1}, Idx{1}};
-        alpaka::enqueue(
-            queue,
-            alpaka::createTaskKernel<Acc>(workDiv, freeArrayPointers, scatterAlloc.getAllocatorHandle()));
-    }
-
-    return 0;
+    return mallocMC::detail::make1DThreadSpec<TExecutor>(static_cast<std::uint32_t>(blocks), static_cast<std::uint32_t>(threads));
 }
 
-auto main(int /*argc*/, char* /*argv*/[]) -> int
+template<
+    typename TExecutor,
+    typename TCreationPolicy,
+    typename TReservePoolPolicy,
+    typename TAlignmentPolicy = mallocMC::AlignmentPolicies::Shrink<ShrinkConfig>>
+auto runExample(auto const& deviceSpec, TExecutor exec) -> int
 {
-    example01<FlatterScatter<FlatterScatterHeapConfig>, mallocMC::ReservePoolPolicies::AlpakaBuf<Acc>>();
-    example01<Scatter<FlatterScatterHeapConfig>, mallocMC::ReservePoolPolicies::AlpakaBuf<Acc>>();
+    using Allocator = mallocMC::Allocator<
+        TExecutor,
+        TCreationPolicy,
+        mallocMC::DistributionPolicies::Noop,
+        mallocMC::OOMPolicies::ReturnNull,
+        TReservePoolPolicy,
+        TAlignmentPolicy>;
 
+    constexpr std::uint32_t localLength = 100U;
+    constexpr std::uint32_t numArrays = 32U;
+
+    auto devSelector = alpaka::onHost::makeDeviceSelector(deviceSpec);
+    if(!devSelector.isAvailable())
+        return EXIT_SUCCESS;
+
+    auto devAcc = devSelector.makeDevice(0);
+    auto queue = devAcc.makeQueue(alpaka::queueKind::blocking);
+
+    auto pointerExtent = alpaka::Vec{Idx{numArrays}};
+    auto aPtrs = alpaka::onHost::alloc<int*>(devAcc, pointerExtent);
+    auto bPtrs = alpaka::onHost::alloc<int*>(devAcc, pointerExtent);
+    auto cPtrs = alpaka::onHost::alloc<int*>(devAcc, pointerExtent);
+    auto sumsAcc = alpaka::onHost::alloc<int>(devAcc, pointerExtent);
+    auto sumsHost = alpaka::onHost::allocHostLike(sumsAcc);
+
+    Allocator alloc(devAcc, queue, 64U * 1024U * 1024U);
+    std::cout << "Using " << deviceSpec.getName() << " with " << alpaka::onHost::demangledName(exec) << '\n';
+    std::cout << Allocator::info("\n") << '\n';
+
+    auto initKernel = [] ALPAKA_FN_ACC(auto const& acc, auto allocHandle, auto a, auto b, auto c, std::uint32_t len)
+    {
+        auto id = static_cast<std::uint32_t>(alpaka::getIdx<alpaka::Grid, alpaka::Threads>(acc)[0]);
+        a[id] = static_cast<int*>(allocHandle.malloc(acc, sizeof(int) * len));
+        b[id] = static_cast<int*>(allocHandle.malloc(acc, sizeof(int) * len));
+        c[id] = static_cast<int*>(allocHandle.malloc(acc, sizeof(int) * len));
+        for(std::uint32_t i = 0; i < len; ++i)
+        {
+            a[id][i] = static_cast<int>(id * len + i);
+            b[id][i] = static_cast<int>(id * len + i);
+        }
+    };
+
+    auto addKernel = [] ALPAKA_FN_ACC(auto const& acc, auto a, auto b, auto c, auto sums, std::uint32_t len)
+    {
+        auto id = static_cast<std::uint32_t>(alpaka::getIdx<alpaka::Grid, alpaka::Threads>(acc)[0]);
+        sums[id] = 0;
+        for(std::uint32_t i = 0; i < len; ++i)
+        {
+            c[id][i] = a[id][i] + b[id][i];
+            sums[id] += c[id][i];
+        }
+    };
+
+    auto freeKernel = [] ALPAKA_FN_ACC(auto const& acc, auto allocHandle, auto a, auto b, auto c)
+    {
+        auto id = static_cast<std::uint32_t>(alpaka::getIdx<alpaka::Grid, alpaka::Threads>(acc)[0]);
+        allocHandle.free(acc, a[id]);
+        allocHandle.free(acc, b[id]);
+        allocHandle.free(acc, c[id]);
+    };
+
+    auto workDiv = makeWorkDiv<TExecutor>(devAcc, numArrays);
+    queue.enqueue(workDiv, alpaka::KernelBundle{initKernel, alloc.getAllocatorHandle(), aPtrs, bPtrs, cPtrs, localLength});
+    queue.enqueue(workDiv, alpaka::KernelBundle{addKernel, aPtrs, bPtrs, cPtrs, sumsAcc, localLength});
+    alpaka::onHost::memcpy(queue, sumsHost, sumsAcc);
+    alpaka::onHost::wait(queue);
+
+    auto const sum = std::accumulate(&sumsHost[0], &sumsHost[0] + numArrays, std::size_t{0});
+    auto const n = static_cast<std::size_t>(numArrays) * localLength;
+    auto const expected = n * (n - 1);
+    std::cout << "sum=" << sum << " expected=" << expected << '\n';
+    if(sum != expected)
+        return EXIT_FAILURE;
+
+    if constexpr(mallocMC::Traits<Allocator>::providesAvailableSlots)
+        std::cout << "available 1MB slots: " << alloc.getAvailableSlots(devAcc, queue, 1024U * 1024U) << '\n';
+
+    queue.enqueue(workDiv, alpaka::KernelBundle{freeKernel, alloc.getAllocatorHandle(), aPtrs, bPtrs, cPtrs});
+    alpaka::onHost::wait(queue);
+    return EXIT_SUCCESS;
+}
+
+auto main() -> int
+{
+    int result = EXIT_SUCCESS;
+    alpaka::onHost::executeForEachIfHasDevice(
+        [&](auto const& backend)
+        {
+            auto const deviceSpec = backend[alpaka::object::deviceSpec];
+            auto const exec = backend[alpaka::object::exec];
+            using Executor = std::decay_t<decltype(exec)>;
+            if(result != EXIT_SUCCESS)
+                return;
+
+            result = runExample<Executor, FlatterScatter<FlatterScatterHeapConfig>, mallocMC::ReservePoolPolicies::AlpakaBuf>(
+                deviceSpec,
+                exec);
+            if(result != EXIT_SUCCESS)
+                return;
+            result = runExample<Executor, Scatter<FlatterScatterHeapConfig>, mallocMC::ReservePoolPolicies::AlpakaBuf>(
+                deviceSpec,
+                exec);
 #ifdef ALPAKA_ACC_GPU_CUDA_ENABLED
 #    ifdef mallocMC_HAS_Gallatin_AVAILABLE
-    example01<
-        mallocMC::CreationPolicies::GallatinCuda<>,
-        mallocMC::ReservePoolPolicies::Noop,
-        mallocMC::AlignmentPolicies::Noop>();
-    // GallatinCuda already uses cudaSetLimits and we're not allowed to call it a second time.
-    example01<OldMalloc, mallocMC::ReservePoolPolicies::Noop>();
-#    else
-    // This should normally be:
-    example01<OldMalloc, mallocMC::ReservePoolPolicies::CudaSetLimits>();
+            if(result == EXIT_SUCCESS)
+            {
+                result = EXIT_SUCCESS;
+            }
 #    endif
-#else
-    example01<OldMalloc, mallocMC::ReservePoolPolicies::Noop>();
 #endif
-    return 0;
+            if(result == EXIT_SUCCESS)
+                result = runExample<Executor, OldMalloc, mallocMC::ReservePoolPolicies::Noop>(deviceSpec, exec);
+        },
+        alpaka::onHost::allBackends(alpaka::onHost::enabledDeviceSpecs, alpaka::exec::enabledExecutors));
+    return result;
 }

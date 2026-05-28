@@ -1273,7 +1273,7 @@ namespace mallocMC
             {
                 detail::DeviceAllocation<unsigned> d_slots;
                 d_slots.allocate(dev, 1u);
-                using DeviceBuffer = decltype(alpaka::onHost::alloc<unsigned>(dev, 1u));
+                using DeviceBuffer = decltype(alpaka::onHost::alloc<unsigned>(dev, std::size_t{1u}));
                 auto& d_slotsBuffer = std::any_cast<DeviceBuffer&>(d_slots.storage);
                 alpaka::onHost::memset(queue, d_slotsBuffer, 0u);
 

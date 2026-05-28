@@ -8,6 +8,7 @@
 - [x] Replace legacy accelerator/tag/device/queue usage in tests and examples with alpaka3 APIs.
 - [x] Update warp-size handling to use alpaka3 `onAcc::Acc` compile-time information where required.
 - [x] Build and run the CPU test suite.
+- [x] Build and run the CPU examples across the enabled host backends.
 - [ ] Configure and compile the project with `nvcc` without running GPU tests.
 - [ ] Do a final regression pass and record remaining risks.
 

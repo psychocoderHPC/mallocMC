@@ -434,14 +434,20 @@ namespace mallocMC::CreationPolicies
         {
             detail::DeviceAllocation<size_t> d_slots;
             d_slots.allocate(dev, 1u);
-            using DeviceBuffer = decltype(alpaka::onHost::alloc<size_t>(dev, 1u));
+            using DeviceBuffer = decltype(alpaka::onHost::alloc<size_t>(dev, std::size_t{1u}));
             auto& d_slotsBuffer = std::any_cast<DeviceBuffer&>(d_slots.storage);
             alpaka::onHost::memset(queue, d_slotsBuffer, 0u);
 
-            auto getAvailableSlotsKernel = [heap, slotSize, slots = d_slots.ptr] ALPAKA_FN_ACC(auto const& acc) -> void
-            { *slots = heap->getAvailableSlotsDeviceFunction(acc, slotSize); };
+            auto getAvailableSlotsKernel = [] ALPAKA_FN_ACC(
+                                               auto const& acc,
+                                               T_DeviceAllocator* heapPtr,
+                                               uint32_t numBytes,
+                                               size_t* slots) -> void
+            { *slots = heapPtr->getAvailableSlotsDeviceFunction(acc, numBytes); };
 
-            queue.enqueue(detail::make1DThreadSpec<TExecutor>(1u, 1u), alpaka::KernelBundle{getAvailableSlotsKernel});
+            queue.enqueue(
+                detail::make1DThreadSpec<TExecutor>(1u, 1u),
+                alpaka::KernelBundle{getAvailableSlotsKernel, heap, slotSize, d_slots.ptr});
             alpaka::onHost::wait(queue);
 
             auto h_slots = alpaka::onHost::alloc<size_t>(detail::makeHostDevice(), 1u);
