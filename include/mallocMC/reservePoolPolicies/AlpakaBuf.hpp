@@ -28,10 +28,9 @@
 
 #pragma once
 
-#include "mallocMC/detail/alpaka3_host.hpp"
-
 #include <alpaka/alpaka.hpp>
 
+#include <any>
 #include <string>
 
 namespace mallocMC
@@ -43,13 +42,16 @@ namespace mallocMC
             template<typename AlpakaDev>
             auto setMemPool(AlpakaDev const& dev, size_t memsize) -> void*
             {
-                poolBuffer.allocate(dev, memsize);
-                return poolBuffer.ptr;
+                auto buffer = alpaka::onHost::alloc<unsigned char>(dev, memsize);
+                pool = alpaka::onHost::data(buffer);
+                poolStorage.emplace<decltype(buffer)>(std::move(buffer));
+                return pool;
             }
 
             void resetMemPool()
             {
-                poolBuffer.reset();
+                poolStorage.reset();
+                pool = nullptr;
             }
 
             static auto classname() -> std::string
@@ -58,7 +60,8 @@ namespace mallocMC
             }
 
         private:
-            detail::DeviceAllocation<unsigned char> poolBuffer;
+            std::any poolStorage;
+            unsigned char* pool = nullptr;
         };
     } // namespace ReservePoolPolicies
 } // namespace mallocMC

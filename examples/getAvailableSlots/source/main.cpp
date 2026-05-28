@@ -10,7 +10,6 @@
 #include <mallocMC/alignmentPolicies/Shrink.hpp>
 #include <mallocMC/allocator.hpp>
 #include <mallocMC/creationPolicies/FlatterScatter.hpp>
-#include <mallocMC/detail/alpaka3_host.hpp>
 #include <mallocMC/distributionPolicies/Noop.hpp>
 #include <mallocMC/oOMPolicies/ReturnNull.hpp>
 #include <mallocMC/reservePoolPolicies/AlpakaBuf.hpp>
@@ -66,7 +65,7 @@ auto makeWorkDiv(auto const& devAcc, std::uint32_t numWorkers)
         blocks *= threads;
         threads = 1u;
     }
-    return mallocMC::detail::make1DThreadSpec<TExecutor>(static_cast<std::uint32_t>(blocks), static_cast<std::uint32_t>(threads));
+    return alpaka::onHost::ThreadSpec{alpaka::Vec{blocks}, alpaka::Vec{threads}, TExecutor{}};
 }
 
 template<
@@ -98,7 +97,7 @@ auto runExample(auto const& deviceSpec, TExecutor exec) -> int
     auto workDiv = makeWorkDiv<TExecutor>(devAcc, 32U);
     auto kernel = [] ALPAKA_FN_ACC(auto const& acc, auto allocHandle, auto out)
     {
-        auto id = static_cast<std::uint32_t>(alpaka::getIdx<alpaka::Grid, alpaka::Threads>(acc)[0]);
+        auto id = static_cast<std::uint32_t>(acc.getIdxWithin(alpaka::onAcc::origin::grid, alpaka::onAcc::unit::threads)[0]);
         auto ptr = static_cast<int*>(allocHandle.malloc(acc, sizeof(int)));
         out[id] = (ptr != nullptr) ? static_cast<int>(id) : -1;
         if(ptr != nullptr)

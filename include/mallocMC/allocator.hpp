@@ -29,7 +29,6 @@
 
 #pragma once
 
-#include "detail/alpaka3_host.hpp"
 #include "device_allocator.hpp"
 #include "mallocMC_allocator_handle.hpp"
 #include "mallocMC_constraints.hpp"
@@ -37,6 +36,7 @@
 
 #include <alpaka/alpaka.hpp>
 
+#include <any>
 #include <cstdint>
 #include <sstream>
 #include <tuple>
@@ -125,7 +125,8 @@ namespace mallocMC
 
     private:
         ReservePoolPolicy reservePolicy;
-        detail::DeviceAllocation<DevAllocator> devAllocatorBuffer;
+        std::any devAllocatorStorage;
+        DevAllocator* devAllocatorBuffer = nullptr;
         HeapInfo heapInfos;
 
         /** allocate heap memory
@@ -138,11 +139,13 @@ namespace mallocMC
             void* pool = reservePolicy.setMemPool(dev, size);
             std::tie(pool, size) = AlignmentPolicy::alignPool(pool, size);
 
-            devAllocatorBuffer.allocate(dev, 1u);
+            auto buffer = alpaka::onHost::alloc<DevAllocator>(dev, std::size_t{1u});
+            devAllocatorBuffer = alpaka::onHost::data(buffer);
+            devAllocatorStorage.emplace<decltype(buffer)>(std::move(buffer));
             CreationPolicy::template initHeap<Executor>(
                 dev,
                 queue,
-                devAllocatorBuffer.ptr,
+                devAllocatorBuffer,
                 pool,
                 size);
 
@@ -157,7 +160,8 @@ namespace mallocMC
          */
         ALPAKA_FN_HOST void free()
         {
-            devAllocatorBuffer.reset();
+            devAllocatorStorage.reset();
+            devAllocatorBuffer = nullptr;
             reservePolicy.resetMemPool();
             heapInfos.size = 0;
             heapInfos.p = nullptr;
@@ -194,7 +198,7 @@ namespace mallocMC
         ALPAKA_FN_HOST
         auto getAllocatorHandle() const -> AllocatorHandle
         {
-            return AllocatorHandle{devAllocatorBuffer.ptr};
+            return AllocatorHandle{devAllocatorBuffer};
         }
 
         ALPAKA_FN_HOST

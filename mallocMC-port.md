@@ -16,4 +16,6 @@
 
 - Keep changes local to `mallocMC`.
 - Prefer API adapters or small helper traits over wide rewrites where possible.
-- Host executors in alpaka3 only model one thread per block, so host launch helpers flatten `numBlocks * numThreads` into `numBlocks' x 1` for CPU execution.
+- The temporary `alpaka3_compat.hpp` and `alpaka3_host.hpp` helpers were removed again; the port now uses alpaka3 APIs directly.
+- CPU tests and CPU examples pass with direct alpaka3 usage.
+- Remaining CUDA compile failures are isolated to the native-CUDA wrapper path in `mallocMC.cuh` / `examples/native-cuda` and not to the CPU-tested allocator code paths.

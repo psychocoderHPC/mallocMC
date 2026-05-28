@@ -34,8 +34,6 @@
 
 #pragma once
 
-#include "detail/alpaka3_compat.hpp"
-
 #include <alpaka/alpaka.hpp>
 
 #include <sys/types.h>
@@ -165,6 +163,6 @@ namespace mallocMC
     template<typename TAcc, typename T>
     ALPAKA_FN_INLINE ALPAKA_FN_ACC auto atomicLoad(TAcc const& acc, T& target)
     {
-        return alpaka::atomicCas(acc, &target, static_cast<T>(0U), static_cast<T>(0U));
+        return alpaka::onAcc::atomicCas(acc, &target, static_cast<T>(0U), static_cast<T>(0U));
     }
 } // namespace mallocMC

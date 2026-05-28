@@ -10,7 +10,6 @@
 #include <mallocMC/creationPolicies/FlatterScatter.hpp>
 #include <mallocMC/creationPolicies/OldMalloc.hpp>
 #include <mallocMC/creationPolicies/Scatter.hpp>
-#include <mallocMC/detail/alpaka3_host.hpp>
 #include <mallocMC/distributionPolicies/Noop.hpp>
 #include <mallocMC/oOMPolicies/ReturnNull.hpp>
 #include <mallocMC/reservePoolPolicies/AlpakaBuf.hpp>
@@ -68,7 +67,7 @@ auto makeWorkDiv(auto const& devAcc, std::uint32_t numWorkers)
         blocks *= threads;
         threads = 1u;
     }
-    return mallocMC::detail::make1DThreadSpec<TExecutor>(static_cast<std::uint32_t>(blocks), static_cast<std::uint32_t>(threads));
+    return alpaka::onHost::ThreadSpec{alpaka::Vec{blocks}, alpaka::Vec{threads}, TExecutor{}};
 }
 
 template<
@@ -109,7 +108,7 @@ auto runExample(auto const& deviceSpec, TExecutor exec) -> int
 
     auto initKernel = [] ALPAKA_FN_ACC(auto const& acc, auto allocHandle, auto a, auto b, auto c, std::uint32_t len)
     {
-        auto id = static_cast<std::uint32_t>(alpaka::getIdx<alpaka::Grid, alpaka::Threads>(acc)[0]);
+        auto id = static_cast<std::uint32_t>(acc.getIdxWithin(alpaka::onAcc::origin::grid, alpaka::onAcc::unit::threads)[0]);
         a[id] = static_cast<int*>(allocHandle.malloc(acc, sizeof(int) * len));
         b[id] = static_cast<int*>(allocHandle.malloc(acc, sizeof(int) * len));
         c[id] = static_cast<int*>(allocHandle.malloc(acc, sizeof(int) * len));
@@ -122,7 +121,7 @@ auto runExample(auto const& deviceSpec, TExecutor exec) -> int
 
     auto addKernel = [] ALPAKA_FN_ACC(auto const& acc, auto a, auto b, auto c, auto sums, std::uint32_t len)
     {
-        auto id = static_cast<std::uint32_t>(alpaka::getIdx<alpaka::Grid, alpaka::Threads>(acc)[0]);
+        auto id = static_cast<std::uint32_t>(acc.getIdxWithin(alpaka::onAcc::origin::grid, alpaka::onAcc::unit::threads)[0]);
         sums[id] = 0;
         for(std::uint32_t i = 0; i < len; ++i)
         {
@@ -133,7 +132,7 @@ auto runExample(auto const& deviceSpec, TExecutor exec) -> int
 
     auto freeKernel = [] ALPAKA_FN_ACC(auto const& acc, auto allocHandle, auto a, auto b, auto c)
     {
-        auto id = static_cast<std::uint32_t>(alpaka::getIdx<alpaka::Grid, alpaka::Threads>(acc)[0]);
+        auto id = static_cast<std::uint32_t>(acc.getIdxWithin(alpaka::onAcc::origin::grid, alpaka::onAcc::unit::threads)[0]);
         allocHandle.free(acc, a[id]);
         allocHandle.free(acc, b[id]);
         allocHandle.free(acc, c[id]);

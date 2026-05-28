@@ -97,6 +97,15 @@ namespace mallocMC
         {
             using Gallatin = gallatin::allocators::Gallatin<bytes_per_segment, smallest_slice, largest_slice>;
 
+            struct SetHeapKernel
+            {
+                template<typename TAcc, typename T_DeviceAllocator>
+                ALPAKA_FN_ACC auto operator()(TAcc const&, T_DeviceAllocator* devAllocator, Gallatin* heapPtr) const -> void
+                {
+                    devAllocator->heap = heapPtr;
+                }
+            };
+
         public:
             template<typename T_AlignmentPolicyLocal>
             using AlignmentAwarePolicy
@@ -131,7 +140,7 @@ namespace mallocMC
                 size_t memsize)
             {
                 static_assert(
-                    std::is_same_v<alpaka::AccToTag<AlpakaAcc>, alpaka::TagGpuCudaRt>,
+                    std::is_same_v<AlpakaAcc, alpaka::exec::GpuCuda>,
                     "The GallatinCuda creation policy is only available on CUDA architectures. Please choose a "
                     "different one.");
 
@@ -143,18 +152,10 @@ namespace mallocMC
                 if(memsize == 0)
                     return;
 
-                auto devHost = alpaka::getDevByIdx(alpaka::PlatformCpu{}, 0);
-                using Dim = typename alpaka::trait::DimType<AlpakaAcc>::type;
-                using Idx = typename alpaka::trait::IdxType<AlpakaAcc>::type;
-                using VecType = alpaka::Vec<Dim, Idx>;
-
                 auto tmp = Gallatin::generate_on_device(memsize, 42, true);
-                auto workDivSingleThread
-                    = alpaka::WorkDivMembers<Dim, Idx>{VecType::ones(), VecType::ones(), VecType::ones()};
-                alpaka::exec<AlpakaAcc>(
-                    queue,
-                    workDivSingleThread,
-                    [tmp, devAllocator] ALPAKA_FN_ACC(AlpakaAcc const&) { devAllocator->heap = tmp; });
+                queue.enqueue(
+                    alpaka::onHost::FrameSpec{alpaka::Vec{1u}, alpaka::Vec{1u}, AlpakaAcc{}},
+                    alpaka::KernelBundle{SetHeapKernel{}, devAllocator, tmp});
             }
 
             static auto classname() -> std::string

@@ -54,7 +54,6 @@
 #include <utility>
 
 using mallocMC::span;
-using Dim = alpaka::DimInt<1>;
 using Idx = std::uint32_t;
 using EnabledBackends
     = std::decay_t<decltype(alpaka::onHost::allBackends(alpaka::onHost::enabledDeviceSpecs, alpaka::exec::enabledExecutors))>;
@@ -125,8 +124,8 @@ struct ContentGenerator
 
 ALPAKA_FN_ACC auto forAll(auto const& acc, auto size, auto functor)
 {
-    auto const idx0 = alpaka::getIdx<alpaka::Grid, alpaka::Threads>(acc)[0];
-    auto const numElements = alpaka::getWorkDiv<alpaka::Thread, alpaka::Elems>(acc)[0];
+    auto const idx0 = acc.getIdxWithin(alpaka::onAcc::origin::grid, alpaka::onAcc::unit::threads)[0];
+    constexpr auto numElements = 1u;
     for(uint32_t i = 0; i < numElements; ++i)
     {
         auto idx = idx0 + i;
@@ -216,16 +215,16 @@ auto createChunkSizes(auto const& devHost, auto const& devAcc, auto& queue)
     auto chunkSizes = makeBuffer<uint32_t>(devHost, devAcc, 2U);
     chunkSizes.m_onHost[0] = 32U;
     chunkSizes.m_onHost[1] = 512U;
-    alpaka::memcpy(queue, chunkSizes.m_onDevice, chunkSizes.m_onHost);
+    alpaka::onHost::memcpy(queue, chunkSizes.m_onDevice, chunkSizes.m_onHost);
     return chunkSizes;
 }
 
 auto createPointers(auto const& devHost, auto const& devAcc, auto& queue, uint32_t const size)
 {
     auto pointers = makeBuffer<void*>(devHost, devAcc, size);
-    span<void*> tmp(alpaka::getPtrNative(pointers.m_onHost), pointers.m_extents[0]);
+    span<void*> tmp(alpaka::onHost::data(pointers.m_onHost), pointers.m_extents[0]);
     std::fill(std::begin(tmp), std::end(tmp), reinterpret_cast<void*>(1U));
-    alpaka::memcpy(queue, pointers.m_onDevice, pointers.m_onHost);
+    alpaka::onHost::memcpy(queue, pointers.m_onDevice, pointers.m_onHost);
     return pointers;
 }
 
@@ -233,8 +232,10 @@ auto setup(auto const& cfg)
 {
     auto const deviceSpec = cfg[alpaka::object::deviceSpec];
     auto selector = alpaka::onHost::makeDeviceSelector(deviceSpec);
+    using Device = std::remove_cvref_t<decltype(selector.makeDevice(0))>;
+    using Queue = std::remove_cvref_t<decltype(std::declval<Device&>().makeQueue(alpaka::queueKind::blocking))>;
     if(!selector.isAvailable())
-        return std::optional<std::tuple<alpaka::onHost::Device, alpaka::onHost::Device, alpaka::onHost::Queue>>{};
+        return std::optional<std::tuple<Device, Device, Queue>>{};
     auto devAcc = selector.makeDevice(0);
     auto devHost = selector.makeDevice(0);
     auto queue = devAcc.makeQueue(alpaka::queueKind::blocking);
@@ -271,11 +272,11 @@ auto fillWith(auto& queue, auto* accessBlock, auto const& chunkSize, auto& point
         FillWith{},
         accessBlock,
         chunkSize,
-        alpaka::getPtrNative(pointers.m_onDevice),
+        alpaka::onHost::data(pointers.m_onDevice),
         pointers.m_extents[0]);
-    alpaka::wait(queue);
-    alpaka::memcpy(queue, pointers.m_onHost, pointers.m_onDevice);
-    alpaka::wait(queue);
+    alpaka::onHost::wait(queue);
+    alpaka::onHost::memcpy(queue, pointers.m_onHost, pointers.m_onDevice);
+    alpaka::onHost::wait(queue);
 }
 
 template<typename TAcc>
@@ -291,21 +292,21 @@ auto fillAllButOne(auto& queue, auto* accessBlock, auto const& chunkSize, auto& 
         workDivSingleThread,
         Destroy{},
         accessBlock,
-        span<void*>(alpaka::getPtrNative(pointers.m_onDevice), 1U));
-    alpaka::wait(queue);
+        span<void*>(alpaka::onHost::data(pointers.m_onDevice), 1U));
+    alpaka::onHost::wait(queue);
     return pointer1;
 }
 
 template<typename TAcc>
 auto freeAllButOneOnFirstPage(auto& queue, auto* accessBlock, auto& pointers)
 {
-    span<void*> tmp(alpaka::getPtrNative(pointers.m_onHost), pointers.m_extents[0]);
+    span<void*> tmp(alpaka::onHost::data(pointers.m_onHost), pointers.m_extents[0]);
     std::sort(std::begin(tmp), std::end(tmp));
     // This points to the first chunk of page 0.
     auto* pointer1 = tmp[0];
-    alpaka::wait(queue);
-    alpaka::memcpy(queue, pointers.m_onDevice, pointers.m_onHost);
-    alpaka::wait(queue);
+    alpaka::onHost::wait(queue);
+    alpaka::onHost::memcpy(queue, pointers.m_onDevice, pointers.m_onHost);
+    alpaka::onHost::wait(queue);
     auto size = pointers.m_extents[0] / numPages - 1;
     // Delete all other chunks on page 0.
     customExec<TAcc>(
@@ -314,8 +315,8 @@ auto freeAllButOneOnFirstPage(auto& queue, auto* accessBlock, auto& pointers)
         size,
         Destroy{},
         accessBlock,
-        span<void*>(alpaka::getPtrNative(pointers.m_onDevice) + 1U, size));
-    alpaka::wait(queue);
+        span<void*>(alpaka::onHost::data(pointers.m_onDevice) + 1U, size));
+    alpaka::onHost::wait(queue);
     return pointer1;
 }
 
@@ -324,8 +325,8 @@ struct CheckContent
     ALPAKA_FN_ACC auto operator()(auto const& acc, auto* content, span<void*> pointers, auto* results, auto chunkSize)
         const
     {
-        auto const idx0 = alpaka::getIdx<alpaka::Grid, alpaka::Threads>(acc)[0];
-        auto const numElements = alpaka::getWorkDiv<alpaka::Thread, alpaka::Elems>(acc)[0];
+        auto const idx0 = acc.getIdxWithin(alpaka::onAcc::origin::grid, alpaka::onAcc::unit::threads)[0];
+        constexpr auto numElements = 1u;
         for(uint32_t i = 0; i < numElements; ++i)
         {
             auto idx = idx0 + i;
@@ -353,16 +354,16 @@ auto checkContent(
     queue.enqueue(
         workDiv,
         CheckContent{},
-        alpaka::getPtrNative(content.m_onDevice),
-        span<void*>(alpaka::getPtrNative(pointers.m_onDevice), pointers.m_extents[0]),
-        alpaka::getPtrNative(results.m_onDevice),
+        alpaka::onHost::data(content.m_onDevice),
+        span<void*>(alpaka::onHost::data(pointers.m_onDevice), pointers.m_extents[0]),
+        alpaka::onHost::data(results.m_onDevice),
         chunkSize);
-    alpaka::wait(queue);
-    alpaka::memcpy(queue, results.m_onHost, results.m_onDevice);
-    alpaka::wait(queue);
+    alpaka::onHost::wait(queue);
+    alpaka::onHost::memcpy(queue, results.m_onHost, results.m_onDevice);
+    alpaka::onHost::wait(queue);
 
 
-    span<bool> tmpResults(alpaka::getPtrNative(results.m_onHost), results.m_extents[0]);
+    span<bool> tmpResults(alpaka::onHost::data(results.m_onHost), results.m_extents[0]);
     auto writtenCorrectly = std::reduce(std::cbegin(tmpResults), std::cend(tmpResults), true, std::multiplies<bool>{});
 
     return writtenCorrectly;
@@ -380,20 +381,20 @@ template<typename TAcc>
 auto getAvailableSlots(auto* accessBlock, auto& queue, auto const& devHost, auto const& devAcc, auto chunkSize)
 {
     auto const workDivSingleThread = alpaka::onHost::ThreadSpec{alpaka::Vec{Idx{1}}, alpaka::Vec{Idx{1}}, TAcc{}};
-    alpaka::wait(queue);
+    alpaka::onHost::wait(queue);
     auto result = makeBuffer<uint32_t>(devHost, devAcc, 1U);
-    alpaka::wait(queue);
+    alpaka::onHost::wait(queue);
     queue.enqueue(
         workDivSingleThread,
         GetAvailableSlots{},
         accessBlock,
         chunkSize,
-        alpaka::getPtrNative(result.m_onDevice));
-    alpaka::wait(queue);
-    alpaka::memcpy(queue, result.m_onHost, result.m_onDevice);
-    alpaka::wait(queue);
+        alpaka::onHost::data(result.m_onDevice));
+    alpaka::onHost::wait(queue);
+    alpaka::onHost::memcpy(queue, result.m_onHost, result.m_onDevice);
+    alpaka::onHost::wait(queue);
     auto tmp = result.m_onHost[0];
-    alpaka::wait(queue);
+    alpaka::onHost::wait(queue);
     return tmp;
 }
 
@@ -402,7 +403,7 @@ auto pageIndex(auto accessBlock, auto* pointer)
     // This is a bit dirty: What we should do here is enqueue a kernel that calls accessBlock->pageIndex().
     // But we assume that the access block starts with the first page, so the pointer to the first page equals the
     // pointer to the access block. Not sure if this is reliable if the pointers are device pointers.
-    return mallocMC::indexOf(pointer, alpaka::getPtrNative(accessBlock), pageSize);
+    return mallocMC::indexOf(pointer, alpaka::onHost::data(accessBlock), pageSize);
 }
 
 struct FillAllUpAndWriteToThem
@@ -414,8 +415,8 @@ struct FillAllUpAndWriteToThem
         span<void*> pointers,
         auto chunkSize) const
     {
-        auto const idx0 = alpaka::getIdx<alpaka::Grid, alpaka::Threads>(acc)[0];
-        auto const numElements = alpaka::getWorkDiv<alpaka::Thread, alpaka::Elems>(acc)[0];
+        auto const idx0 = acc.getIdxWithin(alpaka::onAcc::origin::grid, alpaka::onAcc::unit::threads)[0];
+        constexpr auto numElements = 1u;
         for(uint32_t i = 0; i < numElements; ++i)
         {
             auto idx = idx0 + i;
@@ -558,25 +559,25 @@ TEMPLATE_LIST_TEST_CASE("Threaded Scatter", "", EnabledBackends)
     INFO("exec=" << alpaka::onHost::demangledName(exec));
     using Acc = std::decay_t<decltype(exec)>;
     auto [devAcc, devHost, queue] = *ctx;
-    auto accessBlockBuf = alpaka::allocBuf<MyDeviceAllocator, Idx>(devAcc, alpaka::Vec{Idx{1}});
-    auto dataBuf = alpaka::allocBuf<mallocMC::CreationPolicies::FlatterScatterAlloc::DataPage<blockSize>, Idx>(
+    auto accessBlockBuf = alpaka::onHost::alloc<MyDeviceAllocator>(devAcc, alpaka::Vec{Idx{1}});
+    auto dataBuf = alpaka::onHost::alloc<mallocMC::CreationPolicies::FlatterScatterAlloc::DataPage<blockSize>>(
         devAcc,
         alpaka::Vec{Idx{1}});
     MyScatter::initHeap<Acc>(
         devAcc,
         queue,
-        alpaka::getPtrNative(accessBlockBuf),
-        static_cast<void*>(alpaka::getPtrNative(dataBuf)),
+        alpaka::onHost::data(accessBlockBuf),
+        static_cast<void*>(alpaka::onHost::data(dataBuf)),
         blockSize);
-    alpaka::wait(queue);
-    auto* accessBlock = alpaka::getPtrNative(accessBlockBuf);
+    alpaka::onHost::wait(queue);
+    auto* accessBlock = alpaka::onHost::data(accessBlockBuf);
     auto const chunkSizes = createChunkSizes(devHost, devAcc, queue);
     auto pointers = createPointers(
         devHost,
         devAcc,
         queue,
         getAvailableSlots<Acc>(accessBlock, queue, devHost, devAcc, chunkSizes.m_onHost[0]));
-    alpaka::wait(queue);
+    alpaka::onHost::wait(queue);
 
     SECTION("creates second memory somewhere else.")
     {
@@ -587,12 +588,12 @@ TEMPLATE_LIST_TEST_CASE("Threaded Scatter", "", EnabledBackends)
             size,
             Create{},
             accessBlock,
-            span<void*>(alpaka::getPtrNative(pointers.m_onDevice), size),
+            span<void*>(alpaka::onHost::data(pointers.m_onDevice), size),
             chunkSizes.m_onHost[0]);
-        alpaka::wait(queue);
+        alpaka::onHost::wait(queue);
 
-        alpaka::memcpy(queue, pointers.m_onHost, pointers.m_onDevice);
-        alpaka::wait(queue);
+        alpaka::onHost::memcpy(queue, pointers.m_onHost, pointers.m_onDevice);
+        alpaka::onHost::wait(queue);
 
         CHECK(pointers.m_onHost[0] != pointers.m_onHost[1]);
     }
@@ -605,12 +606,12 @@ TEMPLATE_LIST_TEST_CASE("Threaded Scatter", "", EnabledBackends)
             2U,
             Create{},
             accessBlock,
-            span<void*>(alpaka::getPtrNative(pointers.m_onDevice), 2U),
-            alpaka::getPtrNative(chunkSizes.m_onDevice));
-        alpaka::wait(queue);
+            span<void*>(alpaka::onHost::data(pointers.m_onDevice), 2U),
+            alpaka::onHost::data(chunkSizes.m_onDevice));
+        alpaka::onHost::wait(queue);
 
-        alpaka::memcpy(queue, pointers.m_onHost, pointers.m_onDevice);
-        alpaka::wait(queue);
+        alpaka::onHost::memcpy(queue, pointers.m_onHost, pointers.m_onDevice);
+        alpaka::onHost::wait(queue);
 
         CHECK(pageIndex(dataBuf, pointers.m_onHost[0]) != pageIndex(dataBuf, pointers.m_onHost[1]));
     }
@@ -630,12 +631,12 @@ TEMPLATE_LIST_TEST_CASE("Threaded Scatter", "", EnabledBackends)
             size,
             Create{},
             accessBlock,
-            span<void*>(alpaka::getPtrNative(pointers.m_onDevice), size),
+            span<void*>(alpaka::onHost::data(pointers.m_onDevice), size),
             chunkSizes.m_onHost[0]);
-        alpaka::wait(queue);
+        alpaka::onHost::wait(queue);
 
-        alpaka::memcpy(queue, pointers.m_onHost, pointers.m_onDevice);
-        alpaka::wait(queue);
+        alpaka::onHost::memcpy(queue, pointers.m_onHost, pointers.m_onDevice);
+        alpaka::onHost::wait(queue);
 
         CHECK(
             ((pointers.m_onHost[0] == lastFreeChunk and pointers.m_onHost[1] == nullptr)
@@ -654,19 +655,19 @@ TEMPLATE_LIST_TEST_CASE("Threaded Scatter", "", EnabledBackends)
             workDivSingleThread,
             Destroy{},
             accessBlock,
-            span<void*>(alpaka::getPtrNative(pointers.m_onDevice), pointers.m_extents[0]));
+            span<void*>(alpaka::onHost::data(pointers.m_onDevice), pointers.m_extents[0]));
 
         queue.enqueue(
             workDivSingleThread,
             CreateUntilSuccess{},
             accessBlock,
-            span<void*>(alpaka::getPtrNative(pointers.m_onDevice), 1U),
+            span<void*>(alpaka::onHost::data(pointers.m_onDevice), 1U),
             chunkSizes.m_onHost[0]);
 
-        alpaka::wait(queue);
+        alpaka::onHost::wait(queue);
 
-        alpaka::memcpy(queue, pointers.m_onHost, pointers.m_onDevice);
-        alpaka::wait(queue);
+        alpaka::onHost::memcpy(queue, pointers.m_onHost, pointers.m_onDevice);
+        alpaka::onHost::wait(queue);
 
         CHECK(pageIndex(dataBuf, pointers.m_onHost[0]) == freePage);
     }
@@ -679,9 +680,9 @@ TEMPLATE_LIST_TEST_CASE("Threaded Scatter", "", EnabledBackends)
             2U,
             Create{},
             accessBlock,
-            span<void*>(alpaka::getPtrNative(pointers.m_onDevice), 2U),
-            alpaka::getPtrNative(chunkSizes.m_onDevice));
-        alpaka::wait(queue);
+            span<void*>(alpaka::onHost::data(pointers.m_onDevice), 2U),
+            alpaka::onHost::data(chunkSizes.m_onDevice));
+        alpaka::onHost::wait(queue);
 
         auto const beforeDestroy0
             = getAvailableSlots<Acc>(accessBlock, queue, devHost, devAcc, chunkSizes.m_onHost[0]);
@@ -692,8 +693,8 @@ TEMPLATE_LIST_TEST_CASE("Threaded Scatter", "", EnabledBackends)
             workDiv,
             Destroy{},
             accessBlock,
-            span<void*>(alpaka::getPtrNative(pointers.m_onDevice), 2U));
-        alpaka::wait(queue);
+            span<void*>(alpaka::onHost::data(pointers.m_onDevice), 2U));
+        alpaka::onHost::wait(queue);
 
         auto const afterDestroy0 = getAvailableSlots<Acc>(accessBlock, queue, devHost, devAcc, chunkSizes.m_onHost[0]);
         auto const afterDestroy1 = getAvailableSlots<Acc>(accessBlock, queue, devHost, devAcc, chunkSizes.m_onHost[1]);
@@ -710,9 +711,9 @@ TEMPLATE_LIST_TEST_CASE("Threaded Scatter", "", EnabledBackends)
             2U,
             Create{},
             accessBlock,
-            span<void*>(alpaka::getPtrNative(pointers.m_onDevice), 2U),
+            span<void*>(alpaka::onHost::data(pointers.m_onDevice), 2U),
             chunkSizes.m_onHost[0]);
-        alpaka::wait(queue);
+        alpaka::onHost::wait(queue);
 
         auto const beforeDestroy = getAvailableSlots<Acc>(accessBlock, queue, devHost, devAcc, chunkSizes.m_onHost[0]);
 
@@ -720,8 +721,8 @@ TEMPLATE_LIST_TEST_CASE("Threaded Scatter", "", EnabledBackends)
             workDiv,
             Destroy{},
             accessBlock,
-            span<void*>(alpaka::getPtrNative(pointers.m_onDevice), 2U));
-        alpaka::wait(queue);
+            span<void*>(alpaka::onHost::data(pointers.m_onDevice), 2U));
+        alpaka::onHost::wait(queue);
 
         auto const afterDestroy = getAvailableSlots<Acc>(accessBlock, queue, devHost, devAcc, chunkSizes.m_onHost[0]);
         CHECK(beforeDestroy == afterDestroy - 2U);
@@ -733,10 +734,10 @@ TEMPLATE_LIST_TEST_CASE("Threaded Scatter", "", EnabledBackends)
             devHost,
             devAcc,
             getAvailableSlots<Acc>(accessBlock, queue, devHost, devAcc, chunkSizes.m_onHost[0]));
-        span<uint32_t> tmp(alpaka::getPtrNative(content.m_onHost), content.m_extents[0]);
+        span<uint32_t> tmp(alpaka::onHost::data(content.m_onHost), content.m_extents[0]);
         std::generate(std::begin(tmp), std::end(tmp), ContentGenerator{});
-        alpaka::memcpy(queue, content.m_onDevice, content.m_onHost);
-        alpaka::wait(queue);
+        alpaka::onHost::memcpy(queue, content.m_onDevice, content.m_onHost);
+        alpaka::onHost::wait(queue);
 
         auto workDiv = customExec<Acc>(
             queue,
@@ -744,11 +745,11 @@ TEMPLATE_LIST_TEST_CASE("Threaded Scatter", "", EnabledBackends)
             pointers.m_extents[0],
             FillAllUpAndWriteToThem{},
             accessBlock,
-            alpaka::getPtrNative(content.m_onDevice),
-            span<void*>(alpaka::getPtrNative(pointers.m_onDevice), pointers.m_extents[0]),
+            alpaka::onHost::data(content.m_onDevice),
+            span<void*>(alpaka::onHost::data(pointers.m_onDevice), pointers.m_extents[0]),
             chunkSizes.m_onHost[0]);
 
-        alpaka::wait(queue);
+        alpaka::onHost::wait(queue);
 
         auto writtenCorrectly
             = checkContent<Acc>(devHost, devAcc, queue, pointers, content, workDiv, chunkSizes.m_onHost[0]);
@@ -768,11 +769,11 @@ TEMPLATE_LIST_TEST_CASE("Threaded Scatter", "", EnabledBackends)
             pointers.m_extents[0],
             Destroy{},
             accessBlock,
-            span<void*>(alpaka::getPtrNative(pointers.m_onDevice), pointers.m_extents[0]));
-        alpaka::wait(queue);
+            span<void*>(alpaka::onHost::data(pointers.m_onDevice), pointers.m_extents[0]));
+        alpaka::onHost::wait(queue);
 
-        alpaka::memcpy(queue, pointers.m_onHost, pointers.m_onDevice);
-        alpaka::wait(queue);
+        alpaka::onHost::memcpy(queue, pointers.m_onHost, pointers.m_onDevice);
+        alpaka::onHost::wait(queue);
 
         CHECK(getAvailableSlots<Acc>(accessBlock, queue, devHost, devAcc, chunkSizes.m_onHost[0]) == allSlots);
         CHECK(
@@ -788,13 +789,13 @@ TEMPLATE_LIST_TEST_CASE("Threaded Scatter", "", EnabledBackends)
             pointers.m_extents[0],
             CreateAndDestroMultipleTimes{},
             accessBlock,
-            span<void*>(alpaka::getPtrNative(pointers.m_onDevice), pointers.m_extents[0]),
+            span<void*>(alpaka::onHost::data(pointers.m_onDevice), pointers.m_extents[0]),
             chunkSizes.m_onHost[0]);
-        alpaka::wait(queue);
-        alpaka::memcpy(queue, pointers.m_onHost, pointers.m_onDevice);
-        alpaka::wait(queue);
+        alpaka::onHost::wait(queue);
+        alpaka::onHost::memcpy(queue, pointers.m_onHost, pointers.m_onDevice);
+        alpaka::onHost::wait(queue);
 
-        span<void*> tmpPointers(alpaka::getPtrNative(pointers.m_onHost), pointers.m_extents[0]);
+        span<void*> tmpPointers(alpaka::onHost::data(pointers.m_onHost), pointers.m_extents[0]);
         std::sort(std::begin(tmpPointers), std::end(tmpPointers));
         CHECK(std::unique(std::begin(tmpPointers), std::end(tmpPointers)) == std::end(tmpPointers));
     }
@@ -813,16 +814,16 @@ TEMPLATE_LIST_TEST_CASE("Threaded Scatter", "", EnabledBackends)
             manyPointers.m_extents[0],
             OversubscribedCreation{oversubscriptionFactor, availableSlots},
             accessBlock,
-            span<void*>(alpaka::getPtrNative(manyPointers.m_onDevice), manyPointers.m_extents[0]),
+            span<void*>(alpaka::onHost::data(manyPointers.m_onDevice), manyPointers.m_extents[0]),
             chunkSizes.m_onHost[0]);
-        alpaka::wait(queue);
+        alpaka::onHost::wait(queue);
 
-        alpaka::memcpy(queue, manyPointers.m_onHost, manyPointers.m_onDevice);
-        alpaka::wait(queue);
+        alpaka::onHost::memcpy(queue, manyPointers.m_onHost, manyPointers.m_onDevice);
+        alpaka::onHost::wait(queue);
 
         // We only let the last (availableSlots-1) keep their memory. So, the rest at the beginning should have a
         // nullptr.
-        span<void*> tmpManyPointers(alpaka::getPtrNative(manyPointers.m_onHost), manyPointers.m_extents[0]);
+        span<void*> tmpManyPointers(alpaka::onHost::data(manyPointers.m_onHost), manyPointers.m_extents[0]);
         auto beginNonNull = std::begin(tmpManyPointers) + (oversubscriptionFactor - 1) * availableSlots + 1;
 
         CHECK(std::all_of(
@@ -843,15 +844,15 @@ TEMPLATE_LIST_TEST_CASE("Threaded Scatter", "", EnabledBackends)
             size,
             Create{},
             accessBlock,
-            span<void*>(alpaka::getPtrNative(pointers.m_onDevice), size),
+            span<void*>(alpaka::onHost::data(pointers.m_onDevice), size),
             pageSize);
-        alpaka::wait(queue);
+        alpaka::onHost::wait(queue);
 
-        alpaka::memcpy(queue, pointers.m_onHost, pointers.m_onDevice);
-        alpaka::wait(queue);
+        alpaka::onHost::memcpy(queue, pointers.m_onHost, pointers.m_onDevice);
+        alpaka::onHost::wait(queue);
 
         CHECK(pointers.m_onHost[0] != pointers.m_onHost[1]);
     }
 
-    alpaka::wait(queue);
+    alpaka::onHost::wait(queue);
 }

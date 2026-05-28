@@ -27,7 +27,6 @@
 #pragma once
 
 #include "mallocMC/creationPolicies/FlatterScatter/AccessBlock.hpp"
-#include "mallocMC/detail/alpaka3_host.hpp"
 
 #include <alpaka/alpaka.hpp>
 
@@ -82,9 +81,10 @@ namespace mallocMC::CreationPolicies::FlatterScatterAlloc
         ALPAKA_FN_INLINE ALPAKA_FN_ACC static auto init(auto const& acc, void* accessBlocksPointer, auto heapSize)
             -> void
         {
-            auto threadsInGrid = alpaka::getWorkDiv<alpaka::Grid, alpaka::Threads>(acc);
-            auto numThreads = threadsInGrid.product();
-            auto const [idx] = alpaka::mapIdx<1U>(alpaka::getIdx<alpaka::Grid, alpaka::Threads>(acc), threadsInGrid);
+            auto const threadsInGrid = acc.getExtentsOf(alpaka::onAcc::origin::grid, alpaka::onAcc::unit::threads);
+            auto const numThreads = threadsInGrid.product();
+            auto const idx = static_cast<uint32_t>(
+                alpaka::linearize(threadsInGrid, acc.getIdxWithin(alpaka::onAcc::origin::grid, alpaka::onAcc::unit::threads)));
             auto* accessBlocks = static_cast<MyAccessBlock*>(accessBlocksPointer);
 
             for(uint32_t i = idx; i < numBlocks(heapSize) * MyAccessBlock::numPages(); i += numThreads)
@@ -329,9 +329,9 @@ namespace mallocMC::CreationPolicies::FlatterScatterAlloc
             void* m_heapmem,
             size_t const m_memsize) const
         {
-            auto const [idx] = alpaka::mapIdx<1U>(
-                alpaka::getIdx<alpaka::Grid, alpaka::Threads>(acc),
-                alpaka::getWorkDiv<alpaka::Grid, alpaka::Threads>(acc));
+            auto const idx = static_cast<uint32_t>(alpaka::linearize(
+                acc.getExtentsOf(alpaka::onAcc::origin::grid, alpaka::onAcc::unit::threads),
+                acc.getIdxWithin(alpaka::onAcc::origin::grid, alpaka::onAcc::unit::threads)));
             if(idx == 0u)
             {
                 m_heap->accessBlocks
@@ -386,6 +386,16 @@ namespace mallocMC::CreationPolicies
             return pointer == nullptr;
         }
 
+        struct GetAvailableSlotsKernel
+        {
+            template<typename TAcc, typename T_DeviceAllocator>
+            ALPAKA_FN_ACC auto operator()(TAcc const& acc, T_DeviceAllocator* heapPtr, uint32_t numBytes, size_t* slots)
+                const -> void
+            {
+                *slots = heapPtr->getAvailableSlotsDeviceFunction(acc, numBytes);
+            }
+        };
+
         /**
          * @brief initialise a raw piece of memory for use by the `Heap`.
          *
@@ -408,7 +418,7 @@ namespace mallocMC::CreationPolicies
             }
             auto numPagesPerBlock = MyHeap::MyAccessBlock::numPages();
             queue.enqueue(
-                detail::make1DThreadSpec<TExecutor>(numBlocks * numPagesPerBlock, 1u),
+                alpaka::onHost::FrameSpec{alpaka::Vec{numBlocks}, alpaka::Vec{numPagesPerBlock}, TExecutor{}},
                 alpaka::KernelBundle{FlatterScatterAlloc::InitKernel{}, heap, pool, memsize});
             alpaka::onHost::wait(queue);
         }
@@ -432,25 +442,17 @@ namespace mallocMC::CreationPolicies
             uint32_t const slotSize,
             T_DeviceAllocator* heap) -> unsigned
         {
-            detail::DeviceAllocation<size_t> d_slots;
-            d_slots.allocate(dev, 1u);
-            using DeviceBuffer = decltype(alpaka::onHost::alloc<size_t>(dev, std::size_t{1u}));
-            auto& d_slotsBuffer = std::any_cast<DeviceBuffer&>(d_slots.storage);
+            auto d_slotsBuffer = alpaka::onHost::alloc<size_t>(dev, std::size_t{1u});
+            auto* d_slots = alpaka::onHost::data(d_slotsBuffer);
             alpaka::onHost::memset(queue, d_slotsBuffer, 0u);
 
-            auto getAvailableSlotsKernel = [] ALPAKA_FN_ACC(
-                                               auto const& acc,
-                                               T_DeviceAllocator* heapPtr,
-                                               uint32_t numBytes,
-                                               size_t* slots) -> void
-            { *slots = heapPtr->getAvailableSlotsDeviceFunction(acc, numBytes); };
-
             queue.enqueue(
-                detail::make1DThreadSpec<TExecutor>(1u, 1u),
-                alpaka::KernelBundle{getAvailableSlotsKernel, heap, slotSize, d_slots.ptr});
+                alpaka::onHost::FrameSpec{alpaka::Vec{1u}, alpaka::Vec{1u}, TExecutor{}},
+                alpaka::KernelBundle{GetAvailableSlotsKernel{}, heap, slotSize, d_slots});
             alpaka::onHost::wait(queue);
 
-            auto h_slots = alpaka::onHost::alloc<size_t>(detail::makeHostDevice(), 1u);
+            auto selector = alpaka::onHost::makeDeviceSelector(alpaka::api::host, alpaka::deviceKind::cpu);
+            auto h_slots = alpaka::onHost::alloc<size_t>(selector.makeDevice(0), std::size_t{1u});
             alpaka::onHost::memcpy(queue, h_slots, d_slotsBuffer);
             alpaka::onHost::wait(queue);
 

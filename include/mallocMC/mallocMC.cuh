@@ -89,11 +89,10 @@ namespace mallocMC
             size_t heapSize{};
 
             // All of this is necessary alpaka infrastructure.
-            decltype(alpaka::onHost::makeDeviceSelector(alpaka::api::cuda, alpaka::deviceKind::nvidiaGpu)) const
+            decltype(alpaka::onHost::makeDeviceSelector(alpaka::api::cuda, alpaka::deviceKind::nvidiaGpu))
                 selector{alpaka::onHost::makeDeviceSelector(alpaka::api::cuda, alpaka::deviceKind::nvidiaGpu)};
-            std::remove_cv_t<decltype(selector.makeDevice(0))> const dev{selector.makeDevice(0)};
-            decltype(dev.makeQueue(alpaka::queueKind::nonBlocking)) queue{
-                dev.makeQueue(alpaka::queueKind::nonBlocking)};
+            std::remove_cv_t<decltype(selector.makeDevice(0))> dev{selector.makeDevice(0)};
+            decltype(dev.makeQueue(alpaka::queueKind::nonBlocking)) queue{dev.makeQueue(alpaka::queueKind::nonBlocking)};
 
             // This is our actual host-side instance of the allocator. It sets up everything on the device and provides
             // the handle that we can pass to kernels.

@@ -159,7 +159,7 @@ namespace mallocMC::CreationPolicies::FlatterScatterAlloc
         template<typename TAcc>
         ALPAKA_FN_INLINE ALPAKA_FN_ACC auto set(TAcc const& acc) -> BitMaskStorageType<MyBitMaskSize>
         {
-            return alpaka::atomicOr(
+            return alpaka::onAcc::atomicOr(
                 acc,
                 &mask,
                 static_cast<BitMaskStorageType<MyBitMaskSize>>(+allOnes<MyBitMaskSize>));
@@ -174,7 +174,7 @@ namespace mallocMC::CreationPolicies::FlatterScatterAlloc
         template<typename TAcc>
         ALPAKA_FN_INLINE ALPAKA_FN_ACC auto set(TAcc const& acc, auto const index)
         {
-            return alpaka::atomicOr(acc, &mask, singleBit<MyBitMaskSize>(index));
+            return alpaka::onAcc::atomicOr(acc, &mask, singleBit<MyBitMaskSize>(index));
         }
 
         /**
@@ -186,7 +186,7 @@ namespace mallocMC::CreationPolicies::FlatterScatterAlloc
         template<typename TAcc>
         ALPAKA_FN_INLINE ALPAKA_FN_ACC auto unset(TAcc const& acc, auto const index)
         {
-            return alpaka::atomicAnd(
+            return alpaka::onAcc::atomicAnd(
                 acc,
                 &mask,
                 static_cast<BitMaskStorageType<MyBitMaskSize>>(
@@ -201,7 +201,7 @@ namespace mallocMC::CreationPolicies::FlatterScatterAlloc
         template<typename TAcc>
         ALPAKA_FN_INLINE ALPAKA_FN_ACC auto flip(TAcc const& acc)
         {
-            return alpaka::atomicXor(
+            return alpaka::onAcc::atomicXor(
                 acc,
                 &mask,
                 static_cast<BitMaskStorageType<MyBitMaskSize>>(+allOnes<MyBitMaskSize>));
@@ -216,7 +216,7 @@ namespace mallocMC::CreationPolicies::FlatterScatterAlloc
         template<typename TAcc>
         ALPAKA_FN_INLINE ALPAKA_FN_ACC auto flip(TAcc const& acc, auto const index)
         {
-            return alpaka::atomicXor(
+            return alpaka::onAcc::atomicXor(
                 acc,
                 &mask,
                 static_cast<BitMaskStorageType<MyBitMaskSize>>(singleBit<MyBitMaskSize>(index)));
@@ -310,7 +310,7 @@ namespace mallocMC::CreationPolicies::FlatterScatterAlloc
             auto const selectedStartBit = initialGuess >= endIndex ? 0U : initialGuess;
             for(uint32_t i = selectedStartBit; i < endIndex and result == noFreeBitFound();)
             {
-                oldMask = alpaka::atomicOr(acc, &mask, singleBit<MyBitMaskSize>(i));
+                oldMask = alpaka::onAcc::atomicOr(acc, &mask, singleBit<MyBitMaskSize>(i));
                 if((oldMask & singleBit<MyBitMaskSize>(i)) == 0U)
                 {
                     result = i;
@@ -318,7 +318,8 @@ namespace mallocMC::CreationPolicies::FlatterScatterAlloc
 
                 // In case of no free bit found, this will return -1. Storing it in a uint32_t will underflow and
                 // result in 0xffffffff but that's okay because it also ends the loop as intended.
-                i = alpaka::ffs(acc, static_cast<std::make_signed_t<BitMaskStorageType<MyBitMaskSize>>>(~oldMask)) - 1;
+                using IntrinsicType = std::conditional_t<(sizeof(BitMaskStorageType<MyBitMaskSize>) <= 4u), std::uint32_t, std::uint64_t>;
+                i = alpaka::ffs(static_cast<std::make_signed_t<IntrinsicType>>(~oldMask)) - 1;
             }
 
             return result;
