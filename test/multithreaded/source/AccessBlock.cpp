@@ -41,6 +41,7 @@
 #include <cstdio>
 #include <functional>
 #include <iterator>
+#include <optional>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -49,17 +50,8 @@ using mallocMC::CreationPolicies::FlatterScatterAlloc::AccessBlock;
 using mallocMC::span;
 
 using Idx = std::uint32_t;
-using EnabledExecutors = std::remove_cvref_t<decltype(std::tuple_cat(
-    std::tuple<>{}
-#ifndef ALPAKA_DISABLE_EXEC_CpuOmpBlocks
-    ,
-    std::tuple<alpaka::exec::CpuOmpBlocks>{}
-#endif
-#ifndef ALPAKA_DISABLE_EXEC_CpuSerial
-    ,
-    std::tuple<alpaka::exec::CpuSerial>{}
-#endif
-    ))>;
+using EnabledBackends
+    = std::decay_t<decltype(alpaka::onHost::allBackends(alpaka::onHost::enabledDeviceSpecs, alpaka::exec::enabledExecutors))>;
 
 
 constexpr uint32_t pageSize = 1024;
@@ -235,14 +227,16 @@ auto createPointers(auto const& devHost, auto const& devAcc, auto& queue, uint32
     return pointers;
 }
 
-template<typename TAcc>
-auto setup()
+auto setup(auto const& cfg)
 {
-    auto selector = alpaka::onHost::makeDeviceSelector(alpaka::api::host, alpaka::deviceKind::cpu);
+    auto const deviceSpec = cfg[alpaka::object::deviceSpec];
+    auto selector = alpaka::onHost::makeDeviceSelector(deviceSpec);
+    if(!selector.isAvailable())
+        return std::optional<std::tuple<alpaka::onHost::Device, alpaka::onHost::Device, alpaka::onHost::Queue>>{};
     auto devAcc = selector.makeDevice(0);
     auto devHost = selector.makeDevice(0);
     auto queue = devAcc.makeQueue(alpaka::queueKind::blocking);
-    return std::make_tuple(devAcc, devHost, queue);
+    return std::optional{std::make_tuple(devAcc, devHost, queue)};
 }
 
 template<typename TAcc>
@@ -551,10 +545,22 @@ auto customExec(auto& queue, auto const& devAcc, auto const numElements, auto...
     return workDiv;
 }
 
-TEMPLATE_LIST_TEST_CASE("Threaded AccessBlock", "", EnabledExecutors)
+TEMPLATE_LIST_TEST_CASE("Threaded AccessBlock", "", EnabledBackends)
 {
-    using Acc = TestType;
-    auto [devAcc, devHost, queue] = setup<Acc>();
+    auto cfg = TestType::makeDict();
+    auto const deviceSpec = cfg[alpaka::object::deviceSpec];
+    auto const exec = cfg[alpaka::object::exec];
+    auto ctx = setup(cfg);
+    if(!ctx)
+    {
+        SUCCEED("No device available for " << deviceSpec.getName());
+        return;
+    }
+    INFO("api=" << deviceSpec.getApi().getName());
+    INFO("device=" << deviceSpec.getName());
+    INFO("exec=" << alpaka::onHost::demangledName(exec));
+    using Acc = std::decay_t<decltype(exec)>;
+    auto [devAcc, devHost, queue] = *ctx;
     auto accessBlockBuf = alpaka::allocBuf<MyAccessBlock, Idx>(devAcc, alpaka::Vec{Idx{1}});
     alpaka::memset(queue, accessBlockBuf, 0x00);
     alpaka::wait(queue);

@@ -48,6 +48,7 @@
 #include <cstdio>
 #include <functional>
 #include <iterator>
+#include <optional>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -55,6 +56,8 @@
 using mallocMC::span;
 using Dim = alpaka::DimInt<1>;
 using Idx = std::uint32_t;
+using EnabledBackends
+    = std::decay_t<decltype(alpaka::onHost::allBackends(alpaka::onHost::enabledDeviceSpecs, alpaka::exec::enabledExecutors))>;
 
 
 constexpr uint32_t pageSize = 1024;
@@ -226,14 +229,16 @@ auto createPointers(auto const& devHost, auto const& devAcc, auto& queue, uint32
     return pointers;
 }
 
-template<typename TAcc>
-auto setup()
+auto setup(auto const& cfg)
 {
-    auto selector = alpaka::onHost::makeDeviceSelector(alpaka::api::host, alpaka::deviceKind::cpu);
+    auto const deviceSpec = cfg[alpaka::object::deviceSpec];
+    auto selector = alpaka::onHost::makeDeviceSelector(deviceSpec);
+    if(!selector.isAvailable())
+        return std::optional<std::tuple<alpaka::onHost::Device, alpaka::onHost::Device, alpaka::onHost::Queue>>{};
     auto devAcc = selector.makeDevice(0);
     auto devHost = selector.makeDevice(0);
     auto queue = devAcc.makeQueue(alpaka::queueKind::blocking);
-    return std::make_tuple(devAcc, devHost, queue);
+    return std::optional{std::make_tuple(devAcc, devHost, queue)};
 }
 
 template<typename TAcc>
@@ -537,10 +542,22 @@ auto customExec(auto& queue, auto const& devAcc, auto const numElements, auto...
     return workDiv;
 }
 
-TEMPLATE_LIST_TEST_CASE("Threaded Scatter", "", alpaka::EnabledAccTags)
+TEMPLATE_LIST_TEST_CASE("Threaded Scatter", "", EnabledBackends)
 {
-    using Acc = alpaka::TagToAcc<TestType, Dim, Idx>;
-    auto [devAcc, devHost, queue] = setup<Acc>();
+    auto cfg = TestType::makeDict();
+    auto const deviceSpec = cfg[alpaka::object::deviceSpec];
+    auto const exec = cfg[alpaka::object::exec];
+    auto ctx = setup(cfg);
+    if(!ctx)
+    {
+        SUCCEED("No device available for " << deviceSpec.getName());
+        return;
+    }
+    INFO("api=" << deviceSpec.getApi().getName());
+    INFO("device=" << deviceSpec.getName());
+    INFO("exec=" << alpaka::onHost::demangledName(exec));
+    using Acc = std::decay_t<decltype(exec)>;
+    auto [devAcc, devHost, queue] = *ctx;
     auto accessBlockBuf = alpaka::allocBuf<MyDeviceAllocator, Idx>(devAcc, alpaka::Vec{Idx{1}});
     auto dataBuf = alpaka::allocBuf<mallocMC::CreationPolicies::FlatterScatterAlloc::DataPage<blockSize>, Idx>(
         devAcc,
