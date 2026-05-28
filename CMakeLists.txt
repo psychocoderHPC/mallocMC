@@ -35,7 +35,6 @@ endif()
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/PackageProject.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/CPM_0.40.2.cmake)
 CPMUsePackageLock(${CMAKE_CURRENT_LIST_DIR}/cmake/package-lock.cmake)
-include(/workspace/cmake/finalize.cmake)
 
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/add_controlled.cmake)
 

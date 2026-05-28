@@ -25,7 +25,6 @@ function(add_controlled NAME)
   endif()
 
   if (TARGET ${NAME} OR TARGET ${NAME}::${NAME})
-    message("There already exists a target for dependency ${NAME}. Not addding ${NAME} for ${ADD_CONTROLLED_PREFIX} again.")
     return()
   endif()
 
@@ -57,6 +56,14 @@ function(add_controlled NAME)
   # Our default for ON and AUTO:
   set(CPM_USE_LOCAL_PACKAGES ON)
   set(CPM_LOCAL_PACKAGES_ONLY ON)
+
+  # mallocMC must use the alpaka version pinned in the package lock and not a
+  # workspace-local override or a package discovered via find_package().
+  if(NAME STREQUAL "alpaka")
+    unset(CPM_alpaka_SOURCE CACHE)
+    set(CPM_USE_LOCAL_PACKAGES OFF)
+    set(CPM_LOCAL_PACKAGES_ONLY OFF)
+  endif()
 
   if ("${${ADD_CONTROLLED_PREFIX}_USE_${NAME}}" MATCHES "ON_ALLOW_FETCH")
     set(CPM_USE_LOCAL_PACKAGES ON)
