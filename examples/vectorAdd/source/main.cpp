@@ -49,8 +49,12 @@ struct ShrinkConfig
 struct VectorAddKernel
 {
     template<typename TAcc, typename TAllocHandle, typename TSums>
-    ALPAKA_FN_ACC void operator()(TAcc const& acc, TAllocHandle allocHandle, TSums sums, std::uint32_t len, std::uint32_t count)
-        const
+    ALPAKA_FN_ACC void operator()(
+        TAcc const& acc,
+        TAllocHandle allocHandle,
+        TSums sums,
+        std::uint32_t len,
+        std::uint32_t count) const
     {
         for(auto [id] : alpaka::onAcc::makeIdxMap(acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{count}))
         {
@@ -121,10 +125,8 @@ auto runExample(auto const& deviceSpec, TExecutor exec) -> int
     std::cout << Allocator::info("\n") << '\n';
 
     auto frameExtent = alpaka::Vec{Idx{threadsPerBlock}};
-    auto frameSpec = alpaka::onHost::FrameSpec{
-        alpaka::divCeil(alpaka::Vec{Idx{numWorkers}}, frameExtent),
-        frameExtent,
-        exec};
+    auto frameSpec
+        = alpaka::onHost::FrameSpec{alpaka::divCeil(alpaka::Vec{Idx{numWorkers}}, frameExtent), frameExtent, exec};
     queue.enqueue(
         frameSpec,
         alpaka::KernelBundle{VectorAddKernel{}, alloc.getAllocatorHandle(), sumsAcc, localLength, numWorkers});

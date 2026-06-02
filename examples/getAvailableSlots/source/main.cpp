@@ -123,12 +123,14 @@ auto main() -> int
             if(result != EXIT_SUCCESS)
                 return;
 
+            std::cout << alpaka::onHost::demangledName<FlatterScatter<FlatterScatterHeapConfig>>() << ":\n";
             result = runExample<
                 Executor,
                 FlatterScatter<FlatterScatterHeapConfig>,
                 mallocMC::ReservePoolPolicies::AlpakaBuf>(deviceSpec, exec);
             if(result != EXIT_SUCCESS)
                 return;
+            std::cout << alpaka::onHost::demangledName<Scatter<FlatterScatterHeapConfig>>() << ":\n";
             result = runExample<Executor, Scatter<FlatterScatterHeapConfig>, mallocMC::ReservePoolPolicies::AlpakaBuf>(
                 deviceSpec,
                 exec);
@@ -136,6 +138,7 @@ auto main() -> int
 #    ifdef mallocMC_HAS_Gallatin_AVAILABLE
             if(result == EXIT_SUCCESS)
             {
+                std::cout << alpaka::onHost::demangledName<mallocMC::CreationPolicies::GallatinCuda<>>() << ":\n";
                 result = runExample<
                     Executor,
                     mallocMC::CreationPolicies::GallatinCuda<>,
@@ -145,7 +148,10 @@ auto main() -> int
 #    endif
 #endif
             if(result == EXIT_SUCCESS)
+            {
+                std::cout << alpaka::onHost::demangledName<OldMalloc>() << ":\n";
                 result = runExample<Executor, OldMalloc, mallocMC::ReservePoolPolicies::Noop>(deviceSpec, exec);
+            }
         },
         alpaka::onHost::allBackends(alpaka::onHost::enabledDeviceSpecs, alpaka::exec::enabledExecutors));
     return result;

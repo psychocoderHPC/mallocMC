@@ -26,11 +26,13 @@
   THE SOFTWARE.
 */
 
+#include "mallocMC/span.hpp"
+
 #include <mallocMC/mallocMC.cuh>
 
 #include <cstdint>
 #include <cstdlib>
-#include <iostream>
+#include <functional>
 
 /**
  * @brief Computes the sum of squares of the first `n` natural numbers.
@@ -65,26 +67,19 @@ __device__ auto sumOfSquares(auto const n)
  */
 __global__ void oneDotProductPerThread(mallocMC::CudaMemoryManager<> memoryManager, uint64_t numValues)
 {
+    using mallocMC::span;
     uint64_t tid = threadIdx.x + blockIdx.x * blockDim.x;
 
     // Not very realistic, all threads are doing this on their own:
-    auto* a = reinterpret_cast<uint64_t*>(memoryManager.malloc(numValues * sizeof(uint64_t)));
-    auto* b = reinterpret_cast<uint64_t*>(memoryManager.malloc(numValues * sizeof(uint64_t)));
-    if(a == nullptr || b == nullptr)
-    {
-        printf("Thread %lu: device allocation failed.\n", tid);
-        __trap();
-    }
+    auto a
+        = span<uint64_t>(reinterpret_cast<uint64_t*>(memoryManager.malloc(numValues * sizeof(uint64_t))), numValues);
+    auto b
+        = span<uint64_t>(reinterpret_cast<uint64_t*>(memoryManager.malloc(numValues * sizeof(uint64_t))), numValues);
 
-    for(uint64_t i = 0; i < numValues; ++i)
-    {
-        a[i] = tid + i;
-        b[i] = tid + i;
-    }
+    std::iota(std::begin(a), std::end(a), tid);
+    std::iota(std::begin(b), std::end(b), tid);
 
-    uint64_t result = 0U;
-    for(uint64_t i = 0; i < numValues; ++i)
-        result += a[i] * b[i];
+    uint64_t result = std::transform_reduce(std::cbegin(a), std::cend(a), std::cbegin(b), 0U);
 
     auto expected = sumOfSquares(numValues + tid - 1) - (tid > 0 ? sumOfSquares(tid - 1) : 0);
     if(result != expected)
@@ -93,8 +88,8 @@ __global__ void oneDotProductPerThread(mallocMC::CudaMemoryManager<> memoryManag
         __trap();
     }
 
-    memoryManager.free(a);
-    memoryManager.free(b);
+    memoryManager.free(a.data());
+    memoryManager.free(b.data());
 }
 
 int main()
@@ -106,5 +101,4 @@ int main()
 
     std::cout << "Running native CUDA kernel." << std::endl;
     oneDotProductPerThread<<<8, 256>>>(memoryManager, numValues);
-    cudaDeviceSynchronize();
 }
