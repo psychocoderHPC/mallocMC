@@ -15,7 +15,6 @@
 #include <mallocMC/reservePoolPolicies/AlpakaBuf.hpp>
 #include <mallocMC/reservePoolPolicies/Noop.hpp>
 
-#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
@@ -45,29 +44,6 @@ struct AlignmentConfig
     static constexpr auto dataAlignment = 16;
 };
 
-template<typename TExecutor>
-auto makeWorkDiv(auto const& devAcc, std::uint32_t numWorkers)
-{
-    auto threads = std::max<Idx>(
-        1u,
-        std::min<Idx>(static_cast<Idx>(numWorkers), devAcc.getDeviceProperties().maxThreadsPerBlock));
-    auto blocks = std::max<Idx>(1u, static_cast<Idx>((numWorkers + threads - 1u) / threads));
-    if constexpr(
-        std::is_same_v<TExecutor, alpaka::exec::CpuSerial>
-#ifndef ALPAKA_DISABLE_EXEC_CpuOmpBlocks
-        || std::is_same_v<TExecutor, alpaka::exec::CpuOmpBlocks>
-#endif
-#ifndef ALPAKA_DISABLE_EXEC_CpuTbbBlocks
-        || std::is_same_v<TExecutor, alpaka::exec::CpuTbbBlocks>
-#endif
-    )
-    {
-        blocks *= threads;
-        threads = 1u;
-    }
-    return alpaka::onHost::ThreadSpec{alpaka::Vec{blocks}, alpaka::Vec{threads}, TExecutor{}};
-}
-
 template<
     typename TExecutor,
     typename TCreationPolicy,
@@ -90,35 +66,39 @@ auto runExample(auto const& deviceSpec, TExecutor exec) -> int
     auto devAcc = devSelector.makeDevice(0);
     auto queue = devAcc.makeQueue(alpaka::queueKind::blocking);
     Allocator alloc(devAcc, queue, 64U * 1024U * 1024U);
-
-    auto resultAcc = alpaka::onHost::alloc<int>(devAcc, alpaka::Vec{Idx{32}});
-    auto resultHost = alpaka::onHost::allocHostLike(resultAcc);
-
-    auto workDiv = makeWorkDiv<TExecutor>(devAcc, 32U);
-    auto kernel = [] ALPAKA_FN_ACC(auto const& acc, auto allocHandle, auto out)
-    {
-        auto id = static_cast<std::uint32_t>(
-            acc.getIdxWithin(alpaka::onAcc::origin::grid, alpaka::onAcc::unit::threads)[0]);
-        auto ptr = static_cast<int*>(allocHandle.malloc(acc, sizeof(int)));
-        out[id] = (ptr != nullptr) ? static_cast<int>(id) : -1;
-        if(ptr != nullptr)
-            allocHandle.free(acc, ptr);
-    };
-
-    auto const before = alloc.getAvailableSlots(devAcc, queue, 1U);
-    queue.enqueue(workDiv, alpaka::KernelBundle{kernel, alloc.getAllocatorHandle(), resultAcc});
-    alpaka::onHost::memcpy(queue, resultHost, resultAcc);
-    alpaka::onHost::wait(queue);
-    auto const after = alloc.getAvailableSlots(devAcc, queue, 1U);
+    auto sharedPtrAcc = alpaka::onHost::alloc<int*>(devAcc, alpaka::Vec{Idx{1}});
 
     std::cout << "Using " << deviceSpec.getName() << " with " << alpaka::onHost::demangledName(exec) << '\n';
-    std::cout << "slots before=" << before << " after=" << after << '\n';
-
-    for(Idx i = 0; i < 32u; ++i)
+    constexpr auto numWorkers = 32U;
+    auto kernel = [] ALPAKA_FN_ACC(auto const& acc, auto allocHandle, auto sharedPtr, std::uint32_t count)
     {
-        if(resultHost[i] < 0)
-            return EXIT_FAILURE;
-    }
+        auto const [nativeId] = acc.getIdxWithin(alpaka::onAcc::origin::grid, alpaka::onAcc::unit::threads);
+        if(nativeId == 0U)
+            sharedPtr[0] = static_cast<int*>(allocHandle.malloc(acc, sizeof(int) * count));
+        alpaka::onAcc::syncBlockThreads(acc);
+
+        auto const slots = allocHandle.getAvailableSlots(acc, 1U);
+        for(auto [id] : alpaka::onAcc::makeIdxMap(acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{count}))
+        {
+            if(sharedPtr[0] != nullptr)
+            {
+                sharedPtr[0][id] = static_cast<int>(id);
+                printf("id: %u array: %d slots %u\n", id, sharedPtr[0][id], slots);
+            }
+            else
+            {
+                printf("error: device size allocation failed");
+            }
+        }
+        alpaka::onAcc::syncBlockThreads(acc);
+        if(nativeId == 0U && sharedPtr[0] != nullptr)
+            allocHandle.free(acc, sharedPtr[0]);
+    };
+
+    auto frameSpec = alpaka::onHost::FrameSpec{alpaka::Vec{Idx{1}}, alpaka::Vec{Idx{numWorkers}}, exec};
+    queue.enqueue(frameSpec, alpaka::KernelBundle{kernel, alloc.getAllocatorHandle(), sharedPtrAcc, numWorkers});
+    alpaka::onHost::wait(queue);
+    std::cout << "Slots from Host: " << alloc.getAvailableSlots(devAcc, queue, 1U) << '\n';
     return EXIT_SUCCESS;
 }
 
