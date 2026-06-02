@@ -10,6 +10,7 @@
 #include <mallocMC/alignmentPolicies/Shrink.hpp>
 #include <mallocMC/allocator.hpp>
 #include <mallocMC/creationPolicies/FlatterScatter.hpp>
+#include <mallocMC/creationPolicies/GallatinCuda.hpp>
 #include <mallocMC/distributionPolicies/Noop.hpp>
 #include <mallocMC/oOMPolicies/ReturnNull.hpp>
 #include <mallocMC/reservePoolPolicies/AlpakaBuf.hpp>
@@ -131,11 +132,15 @@ auto main() -> int
             result = runExample<Executor, Scatter<FlatterScatterHeapConfig>, mallocMC::ReservePoolPolicies::AlpakaBuf>(
                 deviceSpec,
                 exec);
-#ifdef ALPAKA_ACC_GPU_CUDA_ENABLED
+#if ALPAKA_LANG_CUDA
 #    ifdef mallocMC_HAS_Gallatin_AVAILABLE
             if(result == EXIT_SUCCESS)
             {
-                result = EXIT_SUCCESS;
+                result = runExample<
+                    Executor,
+                    mallocMC::CreationPolicies::GallatinCuda<>,
+                    mallocMC::ReservePoolPolicies::Noop,
+                    mallocMC::AlignmentPolicies::Noop>(deviceSpec, exec);
             }
 #    endif
 #endif
