@@ -44,6 +44,45 @@ struct ShrinkConfig
     static constexpr auto dataAlignment = 16;
 };
 
+struct VectorAddKernel
+{
+    template<typename TAcc, typename TAllocHandle, typename TSums>
+    ALPAKA_FN_ACC void operator()(TAcc const& acc, TAllocHandle allocHandle, TSums sums, std::uint32_t len, std::uint32_t count)
+        const
+    {
+        for(auto [id] : alpaka::onAcc::makeIdxMap(acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{count}))
+        {
+            auto* a = static_cast<int*>(allocHandle.malloc(acc, sizeof(int) * len));
+            auto* b = static_cast<int*>(allocHandle.malloc(acc, sizeof(int) * len));
+            auto* c = static_cast<int*>(allocHandle.malloc(acc, sizeof(int) * len));
+            if(a == nullptr || b == nullptr || c == nullptr)
+            {
+                sums[id] = -1;
+                if(a != nullptr)
+                    allocHandle.free(acc, a);
+                if(b != nullptr)
+                    allocHandle.free(acc, b);
+                if(c != nullptr)
+                    allocHandle.free(acc, c);
+                continue;
+            }
+
+            sums[id] = 0;
+            for(std::uint32_t i = 0; i < len; ++i)
+            {
+                a[i] = static_cast<int>(id * len + i);
+                b[i] = static_cast<int>(id * len + i);
+                c[i] = a[i] + b[i];
+                sums[id] += c[i];
+            }
+
+            allocHandle.free(acc, a);
+            allocHandle.free(acc, b);
+            allocHandle.free(acc, c);
+        }
+    }
+};
+
 template<
     typename TExecutor,
     typename TCreationPolicy,
@@ -79,46 +118,14 @@ auto runExample(auto const& deviceSpec, TExecutor exec) -> int
     std::cout << "Using " << deviceSpec.getName() << " with " << alpaka::onHost::demangledName(exec) << '\n';
     std::cout << Allocator::info("\n") << '\n';
 
-    auto kernel = [] ALPAKA_FN_ACC(auto const& acc, auto allocHandle, auto sums, std::uint32_t len, std::uint32_t count)
-    {
-        for(auto [id] : alpaka::onAcc::makeIdxMap(acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{count}))
-        {
-            auto* a = static_cast<int*>(allocHandle.malloc(acc, sizeof(int) * len));
-            auto* b = static_cast<int*>(allocHandle.malloc(acc, sizeof(int) * len));
-            auto* c = static_cast<int*>(allocHandle.malloc(acc, sizeof(int) * len));
-            if(a == nullptr || b == nullptr || c == nullptr)
-            {
-                sums[id] = -1;
-                if(a != nullptr)
-                    allocHandle.free(acc, a);
-                if(b != nullptr)
-                    allocHandle.free(acc, b);
-                if(c != nullptr)
-                    allocHandle.free(acc, c);
-                continue;
-            }
-
-            sums[id] = 0;
-            for(std::uint32_t i = 0; i < len; ++i)
-            {
-                a[i] = static_cast<int>(id * len + i);
-                b[i] = static_cast<int>(id * len + i);
-                c[i] = a[i] + b[i];
-                sums[id] += c[i];
-            }
-
-            allocHandle.free(acc, a);
-            allocHandle.free(acc, b);
-            allocHandle.free(acc, c);
-        }
-    };
-
     auto frameExtent = alpaka::Vec{Idx{threadsPerBlock}};
     auto frameSpec = alpaka::onHost::FrameSpec{
         alpaka::divCeil(alpaka::Vec{Idx{numWorkers}}, frameExtent),
         frameExtent,
         exec};
-    queue.enqueue(frameSpec, alpaka::KernelBundle{kernel, alloc.getAllocatorHandle(), sumsAcc, localLength, numWorkers});
+    queue.enqueue(
+        frameSpec,
+        alpaka::KernelBundle{VectorAddKernel{}, alloc.getAllocatorHandle(), sumsAcc, localLength, numWorkers});
     alpaka::onHost::memcpy(queue, sumsHost, sumsAcc);
     alpaka::onHost::wait(queue);
 

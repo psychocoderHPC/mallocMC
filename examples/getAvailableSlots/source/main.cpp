@@ -44,6 +44,36 @@ struct AlignmentConfig
     static constexpr auto dataAlignment = 16;
 };
 
+struct GetAvailableSlotsKernel
+{
+    template<typename TAcc, typename TAllocHandle, typename TSharedPtr>
+    ALPAKA_FN_ACC void operator()(TAcc const& acc, TAllocHandle allocHandle, TSharedPtr sharedPtr, std::uint32_t count)
+        const
+    {
+        auto const [nativeId] = acc.getIdxWithin(alpaka::onAcc::origin::grid, alpaka::onAcc::unit::threads);
+        if(nativeId == 0U)
+            sharedPtr[0] = static_cast<int*>(allocHandle.malloc(acc, sizeof(int) * count));
+        alpaka::onAcc::syncBlockThreads(acc);
+
+        auto const slots = allocHandle.getAvailableSlots(acc, 1U);
+        for(auto [id] : alpaka::onAcc::makeIdxMap(acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{count}))
+        {
+            if(sharedPtr[0] != nullptr)
+            {
+                sharedPtr[0][id] = static_cast<int>(id);
+                printf("id: %u array: %d slots %u\n", id, sharedPtr[0][id], slots);
+            }
+            else
+            {
+                printf("error: device size allocation failed");
+            }
+        }
+        alpaka::onAcc::syncBlockThreads(acc);
+        if(nativeId == 0U && sharedPtr[0] != nullptr)
+            allocHandle.free(acc, sharedPtr[0]);
+    }
+};
+
 template<
     typename TExecutor,
     typename TCreationPolicy,
@@ -70,33 +100,11 @@ auto runExample(auto const& deviceSpec, TExecutor exec) -> int
 
     std::cout << "Using " << deviceSpec.getName() << " with " << alpaka::onHost::demangledName(exec) << '\n';
     constexpr auto numWorkers = 32U;
-    auto kernel = [] ALPAKA_FN_ACC(auto const& acc, auto allocHandle, auto sharedPtr, std::uint32_t count)
-    {
-        auto const [nativeId] = acc.getIdxWithin(alpaka::onAcc::origin::grid, alpaka::onAcc::unit::threads);
-        if(nativeId == 0U)
-            sharedPtr[0] = static_cast<int*>(allocHandle.malloc(acc, sizeof(int) * count));
-        alpaka::onAcc::syncBlockThreads(acc);
-
-        auto const slots = allocHandle.getAvailableSlots(acc, 1U);
-        for(auto [id] : alpaka::onAcc::makeIdxMap(acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{count}))
-        {
-            if(sharedPtr[0] != nullptr)
-            {
-                sharedPtr[0][id] = static_cast<int>(id);
-                printf("id: %u array: %d slots %u\n", id, sharedPtr[0][id], slots);
-            }
-            else
-            {
-                printf("error: device size allocation failed");
-            }
-        }
-        alpaka::onAcc::syncBlockThreads(acc);
-        if(nativeId == 0U && sharedPtr[0] != nullptr)
-            allocHandle.free(acc, sharedPtr[0]);
-    };
 
     auto frameSpec = alpaka::onHost::FrameSpec{alpaka::Vec{Idx{1}}, alpaka::Vec{Idx{numWorkers}}, exec};
-    queue.enqueue(frameSpec, alpaka::KernelBundle{kernel, alloc.getAllocatorHandle(), sharedPtrAcc, numWorkers});
+    queue.enqueue(
+        frameSpec,
+        alpaka::KernelBundle{GetAvailableSlotsKernel{}, alloc.getAllocatorHandle(), sharedPtrAcc, numWorkers});
     alpaka::onHost::wait(queue);
     std::cout << "Slots from Host: " << alloc.getAvailableSlots(devAcc, queue, 1U) << '\n';
     return EXIT_SUCCESS;
